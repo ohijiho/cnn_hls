@@ -2,7 +2,9 @@
 #define __CNN_HLS_FUNCTIONS_H__
 #include "types.h"
 #include "matmul.h"
-#include <math.h>
+//#include <math.h>
+#include <hls_math.h>
+#include <sstream>
 #include <hlslib/xilinx/Operators.h>
 #include <hlslib/xilinx/DataPack.h>
 template<typename T, typename RAM_A, typename RAM_B, typename RAM_C>
@@ -55,8 +57,7 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 									 0 /* FIXME */];
 						for (ptrdiff_t ib = 0; ib < (ptrdiff_t)batch_size; ib++) {
 #pragma HLS UNROLL
-							if (v[ib] > m[ib])
-								m[ib] = v[ib];
+							m[ib] = std::max(m[ib], v[ib]);
 						}
 					}
 				}

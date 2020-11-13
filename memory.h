@@ -5,6 +5,17 @@
 #include <hlslib/xilinx/TreeReduce.h>
 #include "operators.h"
 
+/*
+ * ddr3 512MB ram (256Mx16) (MT41K512M16HA-125:A) (MT41K256M16TW-107:P ??)
+ * 8 banks * 64K (32K?) rows * 1K columns * 16 bits
+ * ref: https://d2m32eurp10079.cloudfront.net/Download/pynqz2_user_manual_v1_0.pdf
+ * 	    https://media-www.micron.com/-/media/client/global/documents/products/data-sheet/dram/ddr3/4gb_ddr3l.pdf?rev=8d4b345161424b60bbe4886434cbccf4
+ *
+ * Page size: 2KB
+ * Minimum burst size: 16B (8 (ddr3 prefetch depth) * 16 bits)
+ * cache line size should be: 16B <= size <= 2KB
+ */
+
 template<typename T, size_t ADDR_SIZE>
 class MainMemory_ref {
 	/*
