@@ -1,9 +1,5 @@
 #include "cnn_functions.h"
 
-#define BATCH_SIZE 16
-typedef ap_fixed<32, 8> value_t;
-typedef hlslib::DataPack<value_t, 16> minibatch_t;
-
 void lenet1(
 		const minibatch_t *layer1_x, minibatch_t *layer1_y, const value_t *layer1_weight, const value_t *layer1_bias,
 		size_2_t layer1_input_size,
@@ -26,10 +22,10 @@ void lenet1(
 		const minibatch_t *layer5_x, minibatch_t *layer5_y, const value_t *layer5_weight, const value_t *layer5_bias,
 		size_t layer5_in_features, size_t layer5_out_features,
 
-		const minibatch_t *layer6_x, minibatch_t *layer6_y, size_t features,
+		const minibatch_t *layer6_x, minibatch_t *layer6_y, size_t layer6_features,
 
 		const minibatch_t *layer7_x, minibatch_t *layer7_y, const value_t *layer7_weight, const value_t *layer7_bias,
-		size_t layer7_in_features, size_t layer7_out_features,
+		size_t layer7_in_features, size_t layer7_out_features
 		) {
 #pragma HLS INTERFACE s_axilite port=return
 
@@ -84,7 +80,7 @@ void lenet1(
 
 #pragma HLS INTERFACE m_axi port=layer6_x offset=slave bundle=gmem
 #pragma HLS INTERFACE m_axi port=layer6_y offset=slave bundle=gmem
-#pragma HLS INTERFACE s_axilite port=features
+#pragma HLS INTERFACE s_axilite port=layer6_features
 
 #pragma HLS INTERFACE m_axi port=layer7_x offset=slave bundle=gmem
 #pragma HLS INTERFACE m_axi port=layer7_y offset=slave bundle=gmem
@@ -97,11 +93,25 @@ void lenet1(
 	 * TODO: run these functions in parallel and independently
 	 */
 
+//	printf("  conv1((%zu, %zu), %zu, %zu, (%zu, %zu), (%zu, %zu), (%zu, %zu), (%zu, %zu))", UNPACK_SIZE2(layer1_input_size), layer1_in_channels, layer1_out_channels, UNPACK_SIZE2(layer1_kernel_size), UNPACK_SIZE2(layer1_stride), UNPACK_SIZE2(layer1_padding), UNPACK_SIZE2(layer1_dilation)); fflush(stdout);
 	cnn_Conv2d<BATCH_SIZE, value_t>(layer1_x, layer1_y, layer1_weight, layer1_bias, layer1_input_size, layer1_in_channels, layer1_out_channels, layer1_kernel_size, layer1_stride, layer1_padding, layer1_dilation);
+//	printf(" done\n"); fflush(stdout);
+//	printf("  max_pool1(%zu, (%zu, %zu), (%zu, %zu), (%zu, %zu), (%zu, %zu), (%zu, %zu))", layer2_channels, UNPACK_SIZE2(layer2_input_size), UNPACK_SIZE2(layer2_kernel_size), UNPACK_SIZE2(layer2_stride), UNPACK_SIZE2(layer2_padding), UNPACK_SIZE2(layer2_dilation)); fflush(stdout);
 	cnn_MaxPool2d<BATCH_SIZE, value_t>(layer2_x, layer2_y, layer2_channels, layer2_input_size, layer2_kernel_size, layer2_stride, layer2_padding, layer2_dilation);
+//	printf(" done\n"); fflush(stdout);
+//	printf("  conv1((%zu, %zu), %zu, %zu, (%zu, %zu), (%zu, %zu), (%zu, %zu), (%zu, %zu))", UNPACK_SIZE2(layer3_input_size), layer3_in_channels, layer3_out_channels, UNPACK_SIZE2(layer3_kernel_size), UNPACK_SIZE2(layer3_stride), UNPACK_SIZE2(layer3_padding), UNPACK_SIZE2(layer3_dilation)); fflush(stdout);
 	cnn_Conv2d<BATCH_SIZE, value_t>(layer3_x, layer3_y, layer3_weight, layer3_bias, layer3_input_size, layer3_in_channels, layer3_out_channels, layer3_kernel_size, layer3_stride, layer3_padding, layer3_dilation);
+//	printf(" done\n"); fflush(stdout);
+//	printf("  max_pool2(%zu, (%zu, %zu), (%zu, %zu), (%zu, %zu), (%zu, %zu), (%zu, %zu))", layer4_channels, UNPACK_SIZE2(layer4_input_size), UNPACK_SIZE2(layer4_kernel_size), UNPACK_SIZE2(layer4_stride), UNPACK_SIZE2(layer4_padding), UNPACK_SIZE2(layer4_dilation)); fflush(stdout);
 	cnn_MaxPool2d<BATCH_SIZE, value_t>(layer4_x, layer4_y, layer4_channels, layer4_input_size, layer4_kernel_size, layer4_stride, layer4_padding, layer4_dilation);
+//	printf(" done\n"); fflush(stdout);
+//	printf("  ip1(%zu, %zu)", layer5_in_features, layer5_out_features); fflush(stdout);
 	cnn_Linear<BATCH_SIZE, value_t>(layer5_x, layer5_y, layer5_weight, layer5_bias, layer5_in_features, layer5_out_features);
-	cnn_Tanh<BATCH_SIZE, value_t>(layer6_x, layer6_y, features);
+//	printf(" done\n"); fflush(stdout);
+//	printf("  tanh1(%zu)", layer6_features); fflush(stdout);
+	cnn_Tanh<BATCH_SIZE, value_t>(layer6_x, layer6_y, layer6_features);
+//	printf(" done\n"); fflush(stdout);
+//	printf("  ip2(%zu, %zu)", layer7_in_features, layer7_out_features); fflush(stdout);
 	cnn_Linear<BATCH_SIZE, value_t>(layer7_x, layer7_y, layer7_weight, layer7_bias, layer7_in_features, layer7_out_features);
+//	printf(" done\n"); fflush(stdout);
 }
