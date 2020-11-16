@@ -65,17 +65,17 @@ static void copy_batch(float *dst, const minibatch_t *src, size_t n) {
 	}
 }
 
-#define DEFINE_PARAMETER(name) \
-weight_t name[PACK_W_SIZE(sizeof(_##name) / sizeof(float))]
-DEFINE_PARAMETER(weights_conv1);
-DEFINE_PARAMETER(bias_conv1);
-DEFINE_PARAMETER(weights_conv2);
-DEFINE_PARAMETER(bias_conv2);
-DEFINE_PARAMETER(weights_ip1);
-DEFINE_PARAMETER(bias_ip1);
-DEFINE_PARAMETER(weights_ip2);
-DEFINE_PARAMETER(bias_ip2);
+#define DEFINE_PARAMETER(name, m) \
+		weight_t name[sizeof(_##name) / sizeof(float) / (m) * PACK_W_SIZE(m)]
+#define DEFINE_WB_PAIR(name) \
+		DEFINE_PARAMETER(weights_##name, sizeof(_bias_##name) / sizeof(float)); \
+		DEFINE_PARAMETER(bias_##name, sizeof(_bias_##name) / sizeof(float));
+DEFINE_WB_PAIR(conv1)
+DEFINE_WB_PAIR(conv2)
+DEFINE_WB_PAIR(ip1)
+DEFINE_WB_PAIR(ip2)
 #undef DEFINE_PARAMETER
+#undef DEFINE_WB_PAIR
 
 static void copy_transpose(weight_t *dst, const float *src, size_t m, size_t n) {
 	for (size_t j = 0; j < n; j++) {
@@ -198,19 +198,19 @@ int main() {
 		);
 //		printf(" lenet1 done\n");fflush(stdout);
 
-		{
-			float xbuf[BATCH_SIZE][784];
-			float ybuf[BATCH_SIZE][24 * 24 * 5];
-			copy_batch((float*)xbuf, test_image[bufr], 784);
-			copy_batch((float*)ybuf, feature_map1[bufw], 24 * 24 * 5);
-			for (ptrdiff_t j = 0, iter = (i - 1) * BATCH_SIZE; j < (ptrdiff_t)BATCH_SIZE && iter < (ptrdiff_t)N_ITER; j++, iter++) {
-                dump_conv(iter, xbuf[j], {28, 28}, 1,
-                        _weights_conv1,
-                        _bias_conv1, 5,
-                        ybuf[j],
-                        {5, 5}, 0, 1);
-			}
-		}
+//		{
+//			float xbuf[BATCH_SIZE][784];
+//			float ybuf[BATCH_SIZE][24 * 24 * 5];
+//			copy_batch((float*)xbuf, test_image[bufr], 784);
+//			copy_batch((float*)ybuf, feature_map1[bufw], 24 * 24 * 5);
+//			for (ptrdiff_t j = 0, iter = (i - 1) * BATCH_SIZE; j < (ptrdiff_t)BATCH_SIZE && iter < (ptrdiff_t)N_ITER; j++, iter++) {
+//                dump_conv(iter, xbuf[j], {28, 28}, 1,
+//                        _weights_conv1,
+//                        _bias_conv1, 5,
+//                        ybuf[j],
+//                        {5, 5}, 0, 1);
+//			}
+//		}
 //		{
 //			float xbuf[BATCH_SIZE][12 * 12 * 5];
 //			float ybuf[BATCH_SIZE][8 * 8 * 5];

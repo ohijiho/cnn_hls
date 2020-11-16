@@ -4,7 +4,7 @@
 #define __VITIS_HLS__
 #endif
 
-#define BATCH_SIZE 16
+#define BATCH_SIZE 4
 #define VALUE_SIZE 32
 #define VALUE_FLOAT 0
 #define VALUE_INT_PART 8

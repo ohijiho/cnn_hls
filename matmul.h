@@ -68,7 +68,7 @@ void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 		uint_t size_m, uint_t size_k, uint_t size_n) {
 	using col_t = hlslib::DataPack<T, pack_m>;
 	using row_t = hlslib::DataPack<T, pack_n>;
-	const uint_t mpack = PACK_W_SIZE(size_m);
+	const uint_t mpack = (size_m - 1) / pack_m + 1;
 	for (uint_t i = 0, ipack = 0; ipack < size_m; i++, ipack += pack_m) {
 		for (uint_t j = 0; j < size_n; j++) {
 			row_t acc[pack_m];
@@ -119,6 +119,46 @@ void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 		}
 	}
 }
+
+//template<uint_t dup_func, typename T, uint_t pack_m = 1, uint_t unroll_m = 1, uint_t pack_n = 1, uint_t unroll_n = 1,
+//		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
+//		typename RAM_a, typename RAM_b, typename RAM_c, typename RAM_bias>
+//void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
+//		uint_t size_m, uint_t size_k, uint_t size_n) {
+//	using col_t = hlslib::DataPack<T, 1>;
+//	using row_t = hlslib::DataPack<T, pack_n>;
+//	for (uint_t i = 0; i < size_m; i++) {
+//		for (uint_t j = 0; j < size_n; j++) {
+//			row_t acc[1];
+//			T acc_part[1][pack_n];
+//#pragma HLS ARRAY_PARTITION variable=acc_part cyclic factor=unroll_n dim=1
+//			{
+//				const col_t biasbuf = bias[i];
+//				T biasbuf_part[1];
+//				biasbuf >> biasbuf_part;
+//				for (uint_t kj = 0; kj < pack_n; kj++) {
+//#pragma HLS UNROLL factor=unroll_n
+//					acc_part[0][kj] = biasbuf_part[0];
+//				}
+//			}
+//			for (uint_t k = 0; k < size_k; k++) {
+//				const col_t abuf = a[k * size_m + i];
+//				const row_t bbuf = b[k * size_n + j];
+//				T abuf_part[1], bbuf_part[pack_n];
+//#pragma HLS ARRAY_PARTITION variable=bbuf_part cyclic factor=unroll_n
+//				abuf >> abuf_part;
+//				bbuf >> bbuf_part;
+//				for (uint_t kj = 0; kj < pack_n; kj++) {
+//#pragma HLS UNROLL factor=unroll_n
+//					acc_part[0][kj] = OperatorReduce::Apply(acc_part[0][kj], OperatorMap::Apply(
+//							abuf_part[0], bbuf_part[kj]));
+//				}
+//			}
+//			acc[0] << acc_part[0];
+//			c[i * size_n + j] = acc[0];
+//		}
+//	}
+//}
 
 //template<uint_t dup_func, typename T, uint_t pack_n = 1, uint_t unroll_n = 1,
 //		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
