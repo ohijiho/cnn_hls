@@ -5,9 +5,11 @@
 #endif
 
 #define BATCH_SIZE 16
-typedef ap_fixed<32, 8> value_t;
-//typedef ap_fixed<64, 8> value_t;
-//typedef float value_t;
-typedef hlslib::DataPack<value_t, BATCH_SIZE> minibatch_t;
+#define VALUE_SIZE 32
+#define VALUE_FLOAT 0
+#define VALUE_INT_PART 8
+#define INT_SIZE 32
+#define INT_PRIMITIVE 1
+#define PACK_W 1
 
 #endif

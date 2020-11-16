@@ -3,6 +3,7 @@
 #include "types.h"
 #include "utils.h"
 #include <hlslib/xilinx/TreeReduce.h>
+#include <hlslib/xilinx/Operators.h>
 #include "operators.h"
 
 /*
@@ -16,7 +17,7 @@
  * cache line size should be: 16B <= size <= 2KB
  */
 
-template<typename T, size_t ADDR_SIZE>
+template<typename T, uint_t ADDR_SIZE>
 class MainMemory_ref {
 	/*
 	 * reference class implementation for MainMemory
@@ -48,17 +49,17 @@ public:
 };
 
 template<typename T, typename MainMemory,
-		size_t ADDR_SIZE, size_t OFFSET_BITS, size_t LINE_BITS,
-		size_t NUM_WAYS, size_t ASSIGN_BITS, size_t TIME_BITS>
+		uint_t ADDR_SIZE, uint_t OFFSET_BITS, uint_t LINE_BITS,
+		uint_t NUM_WAYS, uint_t ASSIGN_BITS, uint_t TIME_BITS>
 class ram_cache {
 public:
-	static const size_t TAG_BITS = ADDR_SIZE - OFFSET_BITS - LINE_BITS;
-	static const size_t NUM_VALUES = 1 << OFFSET_BITS;
-	static const size_t NUM_LINES = 1 << LINE_BITS;
-	static const size_t BUS_SIZE = sizeof(T);
-	static const size_t LINE_SIZE = NUM_VALUES * BUS_SIZE;
-	static const size_t WAY_SIZE = NUM_LINES * LINE_SIZE;
-	static const size_t CACHE_SIZE = NUM_WAYS * WAY_SIZE;
+	static const uint_t TAG_BITS = ADDR_SIZE - OFFSET_BITS - LINE_BITS;
+	static const uint_t NUM_VALUES = 1 << OFFSET_BITS;
+	static const uint_t NUM_LINES = 1 << LINE_BITS;
+	static const uint_t BUS_SIZE = sizeof(T);
+	static const uint_t LINE_SIZE = NUM_VALUES * BUS_SIZE;
+	static const uint_t WAY_SIZE = NUM_LINES * LINE_SIZE;
+	static const uint_t CACHE_SIZE = NUM_WAYS * WAY_SIZE;
 
 	typedef ram_cache this_class;
 
@@ -67,7 +68,7 @@ public:
 	using line_t = ap_uint<LINE_BITS>;
 	using tag_t = ap_uint<TAG_BITS>;
 	using assign_t = ap_uint<ASSIGN_BITS>;
-	using way_t = ap_uint<log2_ceil<size_t>(NUM_WAYS)>;
+	using way_t = ap_uint<log2_ceil<uint_t>(NUM_WAYS)>;
 	using time_t = ap_uint<TIME_BITS>;
 
 	static offset_t offset_part(addr_t addr) {

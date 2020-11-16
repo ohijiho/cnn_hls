@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <ap_int.h>
 #include <ap_fixed.h>
+#include <hls_math.h>
 
 #include <sstream>
 #define HLSLIB_SYNTHESIS
@@ -11,27 +12,72 @@
 
 #include "config.h"
 
-struct size_2_t {
-	size_t width, height;
-	size_t area() const { return height * width; }
+typedef
+#if VALUE_FLOAT
+#if VALUE_SIZE == 32
+		float
+#elif VALUE_SIZE == 64
+		double
+#endif
+#else
+		ap_fixed<VALUE_SIZE, VALUE_INT_PART>
+#endif
+		value_t;
+
+#define MACRO_CAT_3(a, b, c) a##b##c
+#define MACRO_SUB_CAT_3(a, b, c) MACRO_CAT_3(a, b, c)
+typedef
+#if INT_PRIMITIVE
+		MACRO_SUB_CAT_3(int, INT_SIZE, _t)
+#else
+		ap_int<INT_SIZE>
+#endif
+		int_t;
+typedef
+#if INT_PRIMITIVE
+		MACRO_SUB_CAT_3(uint, INT_SIZE, _t)
+#else
+		ap_uint<INT_SIZE>
+#endif
+		uint_t;
+#undef MACRO_CAT_3
+#undef MACRO_SUB_CAT_3
+
+#define PACK_W_SIZE(n) (((n) - 1) / PACK_W + 1)
+#define ALIGN_W(n) (((n) - 1) / PACK_W + 1)
+
+typedef hlslib::DataPack<value_t, BATCH_SIZE> minibatch_t;
+typedef hlslib::DataPack<value_t, PACK_W> weight_t;
+
+struct size2_t {
+	uint_t width, height;
+	constexpr uint_t area() const {
+#pragma HLS INLINE
+		return height * width;
+	}
 };
 
 #define TYPES_SIZE_2_T_BINARY_OP(op, inplace) \
-inline size_2_t operator op(size_2_t a, size_2_t b) {\
+inline size2_t operator op(size2_t a, size2_t b) {\
+_Pragma("HLS INLINE")\
 	return {a.width op b.width, a.height op b.height};\
 }\
-inline size_2_t operator op(size_2_t a, size_t b) {\
+inline size2_t operator op(size2_t a, uint_t b) {\
+	_Pragma("HLS INLINE")\
 	return {a.width op b, a.height op b};\
 }\
-inline size_2_t operator op(size_t a, size_2_t b) {\
+inline size2_t operator op(uint_t a, size2_t b) {\
+	_Pragma("HLS INLINE")\
 	return {a op b.width, a op b.height};\
 }\
-inline size_2_t &operator inplace(size_2_t &a, size_2_t b) {\
+inline size2_t &operator inplace(size2_t &a, size2_t b) {\
+	_Pragma("HLS INLINE")\
 	a.width inplace b.width;\
 	a.height inplace b.height;\
 	return a;\
 }\
-inline size_2_t &operator inplace(size_2_t &a, size_t b) {\
+inline size2_t &operator inplace(size2_t &a, uint_t b) {\
+	_Pragma("HLS INLINE")\
 	a.width inplace b;\
 	a.height inplace b;\
 	return a;\
