@@ -27,11 +27,44 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	 * pack_t y[out_channels][output_size];
 	 * T weight[in_channels][kernel_size][out_channels];
 	 */
-
+	using row_t = hlslib::DataPack<T, batch_size>;
+	using col_t = hlslib::DataPack<T, pack_w>;
+#define WHICH 1
+#if WHICH == 0
 	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
 	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
 	matmul_m_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, im2col, y, bias,
 			im2col.size_m, im2col.size_k, im2col.size_n);
+#elif WHICH == 1
+	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
+	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
+	row_t b_bram[std::max(1 * 5 * 5 * 24 * 24, 5 * 5 * 5 * 8 * 8)];
+	row_t c_bram[std::max(5 * 24 * 24, 5 * 8 * 8)];
+	im2col.dump_all(b_bram);
+	matmul_m_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, b_bram, c_bram, bias,
+			im2col.size_m, im2col.size_k, im2col.size_n);
+	for (uint_t i = 0; i < im2col.size_m * im2col.size_n; i++) {
+		y[i] = c_bram[i];
+	}
+#elif WHICH == 2
+	using im2col_t = iter_im2col<pack_w, batch_size, T, RAM_x>;
+	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
+	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, 4, 5);
+	col_t a_bram[block_m * block_k];
+	row_t b_bram[block_k * block_n];
+	row_t c_bram[block_m * block_n];
+	for (uint_t i = 0; i < im2col.size_m; i += block_m) {
+		for (im2col.reset(); im2col.dump(b_bram, true);) {
+			const auto &res = im2col.last_result;
+			load_bias<0, T, pack_w, batch_size>(c_bram, bias, im2col.size_m, im2col.size_n, i, block_m, block_n);
+			matmul_acc_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(
+					weight, b_bram, c_bram, block_m, block_k, block_n);
+		}
+	}
+#else
+#error No implementation
+#endif
+#undef WHICH
 }
 
 template<uint_t dup_func, uint_t batch_size, typename T, typename RAM_x, typename RAM_y>
@@ -68,9 +101,9 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 	im2col_t im2col(x, input_size, channels, 1, kernel_size, stride, padding, dilation, MaxIdentity<T>::value());
 	for (uint_t ci = 0; ci < channels; ci++) {
 		for (uint_t oi = 0; oi < im2col.size_n; oi++) {
-			pack_t m = MaxIdentity<T>::value();
+			row_t m = MaxIdentity<T>::value();
 			for (uint_t ki = 0; ki < kernel_size.area(); ki++) {
-				const pack_t v = im2col.get(ci, ki, oi);
+				const row_t v = im2col.get(ci, ki, oi);
 				for (uint_t ib = 0; ib < batch_size; ib++) {
 #pragma HLS UNROLL
 //					m[ib] = std::max((T)m[ib], v[ib]);
@@ -90,10 +123,10 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 	for (uint_t ic = 0; ic < channels; ic++) {
 		for (uint_t ih = 0; ih < output_size.height; ih++) {
 			for (uint_t iw = 0; iw < output_size.width; iw++) {
-				pack_t m = -INFINITY;
+				row_t m = -INFINITY;
 				for (uint_t kh = 0; kh < kernel_size.height; kh++) {
 					for (uint_t kw = 0; kw < kernel_size.width; kw++) {
-						pack_t v = x[ic * input_size.height * input_size.width +
+						row_t v = x[ic * input_size.height * input_size.width +
 									 0 /* FIXME */];
 						for (uint_t ib = 0; ib < batch_size; ib++) {
 #pragma HLS UNROLL

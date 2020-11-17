@@ -68,8 +68,9 @@ void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 		uint_t size_m, uint_t size_k, uint_t size_n) {
 	using col_t = hlslib::DataPack<T, pack_m>;
 	using row_t = hlslib::DataPack<T, pack_n>;
-	const uint_t mpack = (size_m - 1) / pack_m + 1;
-	for (uint_t i = 0, ipack = 0; ipack < size_m; i++, ipack += pack_m) {
+	const uint_t num_m_pack = (size_m - 1) / pack_m + 1;
+	const uint_t pack_m_size_n = pack_m * size_n;
+	for (uint_t i = 0, cri = 0, off_c_row = 0; cri < size_m; i++, cri += pack_m, off_c_row += pack_m_size_n) {
 		for (uint_t j = 0; j < size_n; j++) {
 			row_t acc[pack_m];
 #pragma HLS ARRAY_PARTITION variable=acc cyclic factor=unroll_m
@@ -89,9 +90,9 @@ void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 					}
 				}
 			}
-			for (uint_t k = 0; k < size_k; k++) {
-				const col_t abuf = a[k * mpack + i];
-				const row_t bbuf = b[k * size_n + j];
+			for (uint_t k = 0, aoff = i, boff = j; k < size_k; k++, aoff += num_m_pack, boff += size_n) {
+				const col_t abuf = a[aoff];
+				const row_t bbuf = b[boff];
 				T abuf_part[pack_m], bbuf_part[pack_n];
 #pragma HLS ARRAY_PARTITION variable=abuf_part cyclic factor=unroll_m
 #pragma HLS ARRAY_PARTITION variable=bbuf_part cyclic factor=unroll_n
@@ -110,10 +111,10 @@ void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 #pragma HLS UNROLL factor=unroll_m
 				acc[ki] << acc_part[ki];
 			}
-			for (uint_t ci = ipack * size_n + j, ki = 0; ki < pack_m; ki++, ci += size_n) {
+			for (uint_t ki = 0, coff = off_c_row + j; ki < pack_m; ki++, coff += size_n) {
 #pragma HLS UNROLL factor=unroll_m
-				if (ipack + ki < size_m) {
-					c[ci] = acc[ki];
+				if (cri + ki < size_m) {
+					c[coff] = acc[ki];
 				}
 			}
 		}
@@ -193,14 +194,15 @@ void map_reduce(T a, RAM_b b, RAM_c c, T bias,
 	using row_t = hlslib::DataPack<T, pack_n>;
 	using row_part_t = hlslib::DataPack<T, unroll_n>;
 
-	for (uint_t i = 0; i < size_m; i++) {
-		for (uint_t j = 0; j < size_n; j++) {
+	const uint_t b_ch_size = size_k * size_n;
+	for (uint_t i = 0, coff = 0, off_b_i = 0; i < size_m; i++, off_b_i += b_ch_size) {
+		for (uint_t j = 0; j < size_n; j++, coff++) {
 			row_t acc = bias;
 			T acc_part[pack_n];
 #pragma HLS ARRAY_PARTITION variable=acc_part cyclic factor=unroll_n
 			acc >> acc_part;
-			for (uint_t k = 0; k < size_k; k++) {
-				const row_t bbuf = b[(i * size_k + k) * size_n + j];
+			for (uint_t k = 0, boff = off_b_i + j; k < size_k; k++, boff += size_n) {
+				const row_t bbuf = b[boff];
 				T bbuf_part[pack_n];
 #pragma HLS ARRAY_PARTITION variable=bbuf_part cyclic factor=unroll_n
 				bbuf >> bbuf_part;
@@ -214,7 +216,7 @@ void map_reduce(T a, RAM_b b, RAM_c c, T bias,
 				acc_part[kj] = OperatorMap::Apply(a, acc_part[kj]);
 			}
 			acc << acc_part;
-			c[i * size_n + j] = acc;
+			c[coff] = acc;
 		}
 	}
 }
