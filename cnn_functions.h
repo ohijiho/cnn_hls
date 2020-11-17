@@ -48,7 +48,8 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	}
 #elif WHICH == 2
 	using im2col_t = iter_im2col<pack_w, batch_size, T, RAM_x>;
-	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
+//	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
+	const uint_t block_m = 3, block_k = 11, block_n = 23;
 	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, block_k, block_n);
 	col_t a_bram[block_m * block_k];
 	row_t b_bram[block_k * block_n];
@@ -78,9 +79,13 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 						im2col.size_m, block_m,
 						res.k, i, 0, 0,
 						res.size_k, cur_size_m);
+				fill_matrix<T, pack_w>(a_bram, (T)0, block_m, res.size_k, 0, block_k - res.size_k, cur_size_m);
 			}
 			if (res.bias) {
-				load_row_bias<T, pack_w, batch_size>(c_bram, bias, cur_size_m, res.size_n, i);
+				load_row_bias<T, pack_w, batch_size>(c_bram, bias,
+						block_n,
+						0, 0, i,
+						cur_size_m, res.size_n);
 			}
 			else if (res.c_read) {
 				copy_matrix<T, batch_size>(y, c_bram,

@@ -19,7 +19,8 @@ typedef float w_t;
 
 #include "debug.h"
 
-#define N_ITER 1000
+//#define N_ITER 1000
+#define N_ITER 10
 
 static void accuracy(uint32_t iter,											// number of iterations
 							uint32_t *label,							// label for test data
