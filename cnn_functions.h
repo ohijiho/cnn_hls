@@ -49,22 +49,24 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 #elif WHICH == 2
 	using im2col_t = iter_im2col<pack_w, batch_size, T, RAM_x>;
 //	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
-	const uint_t block_m = 3, block_k = 11, block_n = 23;
+	const uint_t block_m = 8, block_k = 8, block_n = 8; // result in brams of 256 elements
+	const uint_t block_m_per_pack = block_m / pack_w;
+	static_assert(block_m_per_pack * pack_w == block_m, "block_m must be a multiple of pack_w");
 	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, block_k, block_n);
 	col_t a_bram[block_m * block_k];
 	row_t b_bram[block_k * block_n];
 	row_t c_bram[block_m * block_n];
 	for (uint_t i = 0; i < im2col.size_m; i += block_m) {
 		const uint_t cur_size_m = std::min(block_m, im2col.size_m - i);
-		for (im2col.reset(); im2col.dump(b_bram, true);) {
+		for (im2col.reset(); im2col.dump(b_bram, false);) {
 			const auto &res = im2col.last_result;
-//			std::cout << "i: " << i << ", j:" << res.j << ", k: " << res.k
-//					<< ", valid: " << res.valid
-//					<< ", weight: " << res.weight
-//					<< ", bias: " << res.bias
-//					<< ", load: " << res.c_read
-//					<< ", store: " << res.c_write << std::endl;
-//			if (in_channels == 1) {
+			if (in_channels == 1) {
+//				std::cout << "i: " << i << ", j:" << res.j << ", k: " << res.k
+//						<< ", valid: " << res.valid
+//						<< ", weight: " << res.weight
+//						<< ", bias: " << res.bias
+//						<< ", load: " << res.c_read
+//						<< ", store: " << res.c_write << std::endl;
 //				std::cout << "(" << i << ", " << res.j << ", " << res.k << "):" << std::endl;
 //				for (uint_t ii = 0; ii < block_k; ii++) {
 //					std::cout << "       ";
@@ -73,7 +75,7 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 //					}
 //					std::cout << std::endl;
 //				}
-//			}
+			}
 			if (res.weight) {
 				copy_matrix<T, pack_w>(weight, a_bram,
 						im2col.size_m, block_m,
@@ -94,7 +96,7 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 						cur_size_m, res.size_n);
 			}
 			matmul_acc_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(
-					a_bram, b_bram, c_bram, block_m, block_k, block_n);
+					a_bram, b_bram, c_bram, block_m_per_pack, block_k, block_n);
 			if (res.c_write) {
 				copy_matrix<T, batch_size>(c_bram, y,
 						block_n, im2col.size_n,

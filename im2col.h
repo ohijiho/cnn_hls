@@ -252,7 +252,7 @@ public:
 			 */
 			dump_result ret = {
 					.valid = true,
-					.weight = column_first || yj_end == size_n,
+					.weight = column_first || s.j.yj == 0,
 					.bias = s.i.yi == 0,
 					.c_read = !column_first && s.i.yi != 0,
 					.c_write = !column_first || yi_end == size_k,
