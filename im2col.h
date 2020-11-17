@@ -142,7 +142,7 @@ public:
 private:
 	struct {
 		struct {
-			int_t yi, off_y_row, off_x_ch;
+			int_t yi, off_x_ch;
 			int_t kri, off_kri;
 			int_t kci, off_kci;
 		} i;
@@ -175,15 +175,15 @@ public:
 			  size_m((out_channels - 1) / pack_m + 1),
 			  size_k(in_channels * kernel_size.area()),
 			  size_n(output_size.area()),
-			  state2({
+			  state2_init({
 		.i = {
-				.yi = 0, .off_y_row = 0, .off_x_ch = 0,
+				.yi = 0, .off_x_ch = 0,
 				.kri = 0, .off_kri = 0,
 				.kci = 0, .off_kci = 0,
 		},
 		.j = {
-				.yj = 0, .off_ori = -padding_hoff,
-				.oci = 0, .off_oci = -padding.width,
+				.yj = 0, .off_ori = -(int_t)padding_hoff,
+				.oci = 0, .off_oci = -(int_t)padding.width,
 		},
 	}) {
 		/*
@@ -195,8 +195,8 @@ public:
 	}
 
 	struct dump_result {
-		bool valid, bias, read, write;
-		int_t j;
+		bool valid, weight, bias, c_read, c_write;
+		uint_t k, j, size_k, size_n;
 		inline operator bool() {
 #pragma HLS inline
 			return valid;
@@ -204,7 +204,7 @@ public:
 	} last_result;
 
 	template <typename RAM_y>
-	dump_result dump(RAM_y y, bool column_first) const {
+	dump_result dump(RAM_y y, bool column_first) {
 #pragma HLS inline
 		{
 			auto &s = state2;
@@ -214,7 +214,7 @@ public:
 			decltype(s.j) j;
 			const int_t yi_end = std::min(s.i.yi + block_k, size_k);
 			const int_t yj_end = std::min(s.j.yj + block_n, size_n);
-			for (;; i.yi++, i.kci++, i.off_kci += dilation.width, i.off_y_row += size_n) { // loop i3 increment
+			for (int_t off_y_row = 0;; i.yi++, i.kci++, i.off_kci += dilation.width, off_y_row += block_n) { // loop i3 increment
 				if (i.kci == kernel_size.width) { // loop i3 stop condition
 					i.kri++, i.off_kri += dilation_hoff; // loop i2 increment
 					if (i.kri == kernel_size.height) { // loop i2 stop condition
@@ -226,7 +226,8 @@ public:
 				if (i.yi == yi_end) // block bound
 					break;
 				j = s.j;
-				for (;; j.yj++, j.oci++, j.off_oci += stride.width) { // loop j2 increment
+				for (int_t off_y = off_y_row;; j.yj++, j.oci++, j.off_oci += stride.width,
+						off_y++) { // loop j2 increment
 					if (j.oci == output_size.width) { // loop j2 stop condition
 						j.off_ori += stride_hoff; // loop j1 increment
 						j.oci = 0, j.off_oci = -padding.width; // loop j2 initialization
@@ -243,7 +244,7 @@ public:
 					} else {
 						t = pad_value;
 					}
-					y[i.off_y_row + j.yj] = t;
+					y[off_y] = t;
 				}
 			}
 			/*
@@ -251,10 +252,14 @@ public:
 			 */
 			dump_result ret = {
 					.valid = true,
+					.weight = column_first || yj_end == size_n,
 					.bias = s.i.yi == 0,
-					.read = !column_first && s.i.yi != 0,
-					.write = !column_first || yi_end == size_k,
-					.j = s.j.yj,
+					.c_read = !column_first && s.i.yi != 0,
+					.c_write = !column_first || yi_end == size_k,
+					.k = (uint_t)s.i.yi,
+					.j = (uint_t)s.j.yj,
+					.size_k = (uint_t)(yi_end - s.i.yi),
+					.size_n = (uint_t)(yj_end - s.j.yj),
 			};
 			if (column_first) {
 				if (yi_end == size_k) { // end of column

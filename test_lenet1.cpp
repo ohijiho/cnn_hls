@@ -198,19 +198,19 @@ int main() {
 		);
 //		printf(" lenet1 done\n");fflush(stdout);
 
-//		{
-//			float xbuf[BATCH_SIZE][784];
-//			float ybuf[BATCH_SIZE][24 * 24 * 5];
-//			copy_batch((float*)xbuf, test_image[bufr], 784);
-//			copy_batch((float*)ybuf, feature_map1[bufw], 24 * 24 * 5);
-//			for (ptrdiff_t j = 0, iter = (i - 1) * BATCH_SIZE; j < (ptrdiff_t)BATCH_SIZE && iter < (ptrdiff_t)N_ITER; j++, iter++) {
-//                dump_conv(iter, xbuf[j], {28, 28}, 1,
-//                        _weights_conv1,
-//                        _bias_conv1, 5,
-//                        ybuf[j],
-//                        {5, 5}, 0, 1);
-//			}
-//		}
+		{
+			float xbuf[BATCH_SIZE][784];
+			float ybuf[BATCH_SIZE][24 * 24 * 5];
+			copy_batch((float*)xbuf, test_image[bufr], 784);
+			copy_batch((float*)ybuf, feature_map1[bufw], 24 * 24 * 5);
+			for (ptrdiff_t j = 0, iter = (i - 1) * BATCH_SIZE; j < (ptrdiff_t)BATCH_SIZE && iter < (ptrdiff_t)N_ITER; j++, iter++) {
+                dump_conv(iter, xbuf[j], {28, 28}, 1,
+                        _weights_conv1,
+                        _bias_conv1, 5,
+                        ybuf[j],
+                        {5, 5}, 0, 1);
+			}
+		}
 //		{
 //			float xbuf[BATCH_SIZE][12 * 12 * 5];
 //			float ybuf[BATCH_SIZE][8 * 8 * 5];

@@ -24,7 +24,7 @@ void matmul_ram_naive(RAM_a a, RAM_b b, RAM_c c,
 //template<uint_t dup_func, typename T, uint_t pack_m = 1, uint_t unroll_m = 1, uint_t pack_n = 1, uint_t unroll_n = 1,
 //		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
 //		typename RAM_a, typename RAM_b, typename RAM_c, typename RAM_bias>
-//void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
+//void matmul_row_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 //		uint_t size_m, uint_t size_k, uint_t size_n) {
 //	using col_t = hlslib::DataPack<T, pack_m>;
 //	using row_t = hlslib::DataPack<T, pack_n>;
@@ -64,7 +64,7 @@ void matmul_ram_naive(RAM_a a, RAM_b b, RAM_c c,
 template<uint_t dup_func, typename T, uint_t pack_m = 1, uint_t unroll_m = 1, uint_t pack_n = 1, uint_t unroll_n = 1,
 		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
 		typename RAM_a, typename RAM_b, typename RAM_c, typename RAM_bias>
-void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
+void matmul_row_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 		uint_t size_m, uint_t size_k, uint_t size_n) {
 	using col_t = hlslib::DataPack<T, pack_m>;
 	using row_t = hlslib::DataPack<T, pack_n>;
@@ -124,7 +124,7 @@ void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 //template<uint_t dup_func, typename T, uint_t pack_m = 1, uint_t unroll_m = 1, uint_t pack_n = 1, uint_t unroll_n = 1,
 //		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
 //		typename RAM_a, typename RAM_b, typename RAM_c, typename RAM_bias>
-//void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
+//void matmul_row_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 //		uint_t size_m, uint_t size_k, uint_t size_n) {
 //	using col_t = hlslib::DataPack<T, 1>;
 //	using row_t = hlslib::DataPack<T, pack_n>;
@@ -224,7 +224,7 @@ void map_reduce(T a, RAM_b b, RAM_c c, T bias,
 //template<uint_t dup_func, typename T, uint_t pack_m = 1, uint_t unroll_m = 1, uint_t pack_n = 1, uint_t unroll_n = 1,
 //		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
 //		typename RAM_a, typename RAM_b, typename RAM_c, typename RAM_bias>
-//void matmul_m_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
+//void matmul_row_bias_transpose_a(RAM_a a, RAM_b b, RAM_c c, RAM_bias bias,
 //		uint_t size_m, uint_t size_k, uint_t size_n) {
 //	for (uint_t i = 0; i < size_m; i++) {
 //		for (uint_t j = 0; j < size_n; j++) {
@@ -331,5 +331,57 @@ void map_reduce(T a, RAM_b b, RAM_c c, T bias,
 //		}
 //	}
 //}
+
+template<uint_t dup_func, typename T, uint_t pack_m = 1, uint_t unroll_m = 1, uint_t pack_n = 1, uint_t unroll_n = 1,
+		typename OperatorMap = hlslib::op::Product<T>, typename OperatorReduce = hlslib::op::Sum<T>,
+		typename RAM_a, typename RAM_b, typename RAM_c>
+void matmul_acc_transpose_a(RAM_a a, RAM_b b, RAM_c c,
+		uint_t size_m, uint_t size_k, uint_t size_n) {
+	using col_t = hlslib::DataPack<T, pack_m>;
+	using row_t = hlslib::DataPack<T, pack_n>;
+	const uint_t pack_m_size_n = pack_m * size_n;
+	for (uint_t off_c_row = 0, i = 0; i < size_m; i++, off_c_row += pack_m_size_n) {
+		for (uint_t j = 0; j < size_n; j++) {
+			row_t acc[pack_m];
+#pragma HLS ARRAY_PARTITION variable=acc cyclic factor=unroll_m
+			T acc_part[pack_m][pack_n];
+#pragma HLS ARRAY_PARTITION variable=acc_part cyclic factor=unroll_m dim=1
+#pragma HLS ARRAY_PARTITION variable=acc_part cyclic factor=unroll_n dim=2
+			for (uint_t off_c = off_c_row + j, ki = 0; ki < pack_m; ki++, off_c += size_n) {
+				acc[ki] = c[off_c];
+			}
+			for (uint_t ki = 0; ki < pack_m; ki++) {
+#pragma HLS UNROLL factor=unroll_m
+				acc[ki] >> acc_part[ki];
+			}
+			for (uint_t off_a = i, off_b = j,
+					k = 0; k < size_k; k++,
+					off_a += size_m, off_b += size_n) {
+				const col_t abuf = a[off_a];
+				const row_t bbuf = b[off_b];
+				T abuf_part[pack_m], bbuf_part[pack_n];
+#pragma HLS ARRAY_PARTITION variable=abuf_part cyclic factor=unroll_m
+#pragma HLS ARRAY_PARTITION variable=bbuf_part cyclic factor=unroll_n
+				abuf >> abuf_part;
+				bbuf >> bbuf_part;
+				for (uint_t ki = 0; ki < pack_m; ki++) {
+#pragma HLS UNROLL factor=unroll_m
+					for (uint_t kj = 0; kj < pack_n; kj++) {
+#pragma HLS UNROLL factor=unroll_n
+						acc_part[ki][kj] = OperatorReduce::Apply(acc_part[ki][kj], OperatorMap::Apply(
+								abuf_part[ki], bbuf_part[kj]));
+					}
+				}
+			}
+			for (uint_t ki = 0; ki < pack_m; ki++) {
+#pragma HLS UNROLL factor=unroll_m
+				acc[ki] << acc_part[ki];
+			}
+			for (uint_t off_c = off_c_row + j, ki = 0; ki < pack_m; ki++, off_c += size_n) {
+				c[off_c] = acc[ki];
+			}
+		}
+	}
+}
 
 #endif

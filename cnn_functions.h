@@ -1,8 +1,8 @@
 #ifndef __CNN_HLS_FUNCTIONS_H__
 #define __CNN_HLS_FUNCTIONS_H__
 #include "types.h"
+#include "matrix.h"
 #include "matmul.h"
-//#include <math.h>
 #include <hls_math.h>
 #include "im2col.h"
 #include "utils.h"
@@ -29,11 +29,11 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	 */
 	using row_t = hlslib::DataPack<T, batch_size>;
 	using col_t = hlslib::DataPack<T, pack_w>;
-#define WHICH 1
+#define WHICH 2
 #if WHICH == 0
 	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
 	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
-	matmul_m_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, im2col, y, bias,
+	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, im2col, y, bias,
 			im2col.size_m, im2col.size_k, im2col.size_n);
 #elif WHICH == 1
 	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
@@ -41,7 +41,7 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	row_t b_bram[std::max(1 * 5 * 5 * 24 * 24, 5 * 5 * 5 * 8 * 8)];
 	row_t c_bram[std::max(5 * 24 * 24, 5 * 8 * 8)];
 	im2col.dump_all(b_bram);
-	matmul_m_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, b_bram, c_bram, bias,
+	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, b_bram, c_bram, bias,
 			im2col.size_m, im2col.size_k, im2col.size_n);
 	for (uint_t i = 0; i < im2col.size_m * im2col.size_n; i++) {
 		y[i] = c_bram[i];
@@ -49,16 +49,53 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 #elif WHICH == 2
 	using im2col_t = iter_im2col<pack_w, batch_size, T, RAM_x>;
 	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
-	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, 4, 5);
+	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, block_k, block_n);
 	col_t a_bram[block_m * block_k];
 	row_t b_bram[block_k * block_n];
 	row_t c_bram[block_m * block_n];
 	for (uint_t i = 0; i < im2col.size_m; i += block_m) {
+		const uint_t cur_size_m = std::min(block_m, im2col.size_m - i);
 		for (im2col.reset(); im2col.dump(b_bram, true);) {
 			const auto &res = im2col.last_result;
-			load_bias<0, T, pack_w, batch_size>(c_bram, bias, im2col.size_m, im2col.size_n, i, block_m, block_n);
+//			std::cout << "i: " << i << ", j:" << res.j << ", k: " << res.k
+//					<< ", valid: " << res.valid
+//					<< ", weight: " << res.weight
+//					<< ", bias: " << res.bias
+//					<< ", load: " << res.c_read
+//					<< ", store: " << res.c_write << std::endl;
+//			if (in_channels == 1) {
+//				std::cout << "(" << i << ", " << res.j << ", " << res.k << "):" << std::endl;
+//				for (uint_t ii = 0; ii < block_k; ii++) {
+//					std::cout << "       ";
+//					for (uint_t jj = 0; jj < block_n; jj++) {
+//						std::cout << " " << b_bram[ii * block_n + jj];
+//					}
+//					std::cout << std::endl;
+//				}
+//			}
+			if (res.weight) {
+				copy_matrix<T, pack_w>(weight, a_bram,
+						im2col.size_m, block_m,
+						res.k, i, 0, 0,
+						res.size_k, cur_size_m);
+			}
+			if (res.bias) {
+				load_row_bias<T, pack_w, batch_size>(c_bram, bias, cur_size_m, res.size_n, i);
+			}
+			else if (res.c_read) {
+				copy_matrix<T, batch_size>(y, c_bram,
+						im2col.size_n, block_n,
+						i, res.j, 0, 0,
+						cur_size_m, res.size_n);
+			}
 			matmul_acc_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(
-					weight, b_bram, c_bram, block_m, block_k, block_n);
+					a_bram, b_bram, c_bram, block_m, block_k, block_n);
+			if (res.c_write) {
+				copy_matrix<T, batch_size>(c_bram, y,
+						block_n, im2col.size_n,
+						0, 0, i, res.j,
+						cur_size_m, res.size_n);
+			}
 		}
 	}
 #else
@@ -160,13 +197,13 @@ void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	 * T weight[in_channels][kernel_size][out_channels];
 	 */
 
-	matmul_m_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, x, y, bias, out_features, in_features, 1);
+	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, x, y, bias, out_features, in_features, 1);
 //	cnn_Conv2d<dup_func, batch_size, T>(x, y, weight, bias,
 //			{1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
 
 //	using im2col_t = ram_im2col<batch_size, 1, T, RAM_x>;
 //	im2col_t im2col(x, {1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
-//	matmul_m_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, im2col, y, bias,
+//	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, im2col, y, bias,
 //			out_features, in_features, 1);
 
 //	struct ram_t {
@@ -174,7 +211,7 @@ void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 //			return (T)0;
 //		}
 //	} ram;
-//	matmul_m_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, ram, y, bias, out_features, in_features, 1);
+//	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, ram, y, bias, out_features, in_features, 1);
 }
 
 template<uint_t dup_func, uint_t batch_size, typename T, uint_t unroll_factor,
