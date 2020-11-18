@@ -4,12 +4,13 @@
 #define __VITIS_HLS__
 #endif
 
-#define BATCH_SIZE 4
+#define BATCH_SIZE 1
 #define VALUE_SIZE 32
 #define VALUE_FLOAT 0
 #define VALUE_INT_PART 8
 #define INT_SIZE 32
 #define INT_PRIMITIVE 1
 #define PACK_W 1
+#define LAYER6_TANH_CPU 1
 
 #endif

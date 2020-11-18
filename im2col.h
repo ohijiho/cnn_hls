@@ -288,9 +288,11 @@ public:
 	}
 
 	void reset() {
+#pragma HLS INLINE
 		state2 = state2_init;
 	}
 	void next_image() {
+#pragma HLS INLINE
 		state2.i = state2_init.i;
 		state2.j = state2_init.j;
 		state2.off_img += image_size;

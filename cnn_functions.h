@@ -53,10 +53,10 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	const uint_t block_m_per_pack = block_m / pack_w;
 	static_assert(block_m_per_pack * pack_w == block_m, "block_m must be a multiple of pack_w");
 	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, block_k, block_n);
-	col_t a_bram[block_m * block_k];
+	col_t a_bram[block_m_per_pack * block_k];
 	row_t b_bram[block_k * block_n];
 	row_t c_bram[block_m * block_n];
-	for (uint_t off_c_i = 0, i = 0; i < im2col.size_m; i += block_m, off_c_i += im2col.size_n) {
+	for (uint_t off_c_i = 0, i = 0; i < im2col.size_m; i += block_m, off_c_i += block_m * im2col.size_n) {
 		const uint_t cur_size_m = std::min(block_m, im2col.size_m - i);
 		for (im2col.reset(); im2col.dump(b_bram, true);) {
 			const auto &res = im2col.last_result;
@@ -277,21 +277,65 @@ void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	 * T weight[in_channels][kernel_size][out_channels];
 	 */
 
+	using row_t = hlslib::DataPack<T, batch_size>;
+	using col_t = hlslib::DataPack<T, pack_w>;
+#define WHICH 2
+#if WHICH == 0
 	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, x, y, bias, out_features, in_features, 1);
-//	cnn_Conv2d<dup_func, batch_size, T>(x, y, weight, bias,
-//			{1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
+#elif WHICH == 1
+	cnn_Conv2d<dup_func, batch_size, T>(x, y, weight, bias,
+			{1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
 
-//	using im2col_t = ram_im2col<batch_size, 1, T, RAM_x>;
-//	im2col_t im2col(x, {1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
-//	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, im2col, y, bias,
-//			out_features, in_features, 1);
+	using im2col_t = ram_im2col<batch_size, 1, T, RAM_x>;
+	im2col_t im2col(x, {1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
+	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, im2col, y, bias,
+			out_features, in_features, 1);
 
-//	struct ram_t {
-//		pack_t operator[](int_t i) {
-//			return (T)0;
-//		}
-//	} ram;
-//	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, ram, y, bias, out_features, in_features, 1);
+	struct ram_t {
+		pack_t operator[](int_t i) {
+			return (T)0;
+		}
+	} ram;
+	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, ram, y, bias, out_features, in_features, 1);
+#elif WHICH == 2
+	const uint_t size_m = out_features, size_k = in_features;
+	const uint_t block_m = 16, block_k = 16;
+	const uint_t block_m_per_pack = block_m / pack_w;
+	static_assert(block_m_per_pack * pack_w == block_m, "block_m must be a multiple of pack_w");
+	col_t a_bram[block_m * block_k];
+	row_t b_bram[block_k];
+	row_t c_bram[block_m];
+	for (uint_t i = 0; i < size_m; i += block_m) {
+		uint_t cur_size_m = std::min(block_m, size_m - i);
+		load_row_bias<T, pack_w, batch_size>(c_bram, bias,
+				1,
+				0, i,
+				block_m, 1);
+		for (uint_t a_off = i, k = 0; k < size_k; k += block_k, a_off += block_k * size_m) {
+			uint_t cur_size_k = std::min(block_k, size_k - k);
+			{
+				copy_matrix<T, pack_w>(weight, a_bram,
+						size_m, block_m,
+						a_off, 0,
+						cur_size_k, cur_size_m);
+				fill_matrix<T, pack_w>(a_bram, (T)0, block_m, cur_size_k * block_m, block_k - cur_size_k, cur_size_m);
+			}
+			copy_matrix<T, pack_w>(x, b_bram,
+					1, 1,
+					k, 0,
+					cur_size_k, 1);
+			matmul_acc_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(
+					a_bram, b_bram, c_bram, block_m_per_pack, block_k, 1);
+		}
+		copy_matrix<T, batch_size>(c_bram, y,
+				1, 1,
+				0, i,
+				cur_size_m, 1);
+	}
+#else
+#error No implementation
+#endif
+#undef WHICH
 }
 
 template<uint_t dup_func, uint_t batch_size, typename T, uint_t unroll_factor,
