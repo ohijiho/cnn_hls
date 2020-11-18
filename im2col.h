@@ -140,6 +140,9 @@ public:
 	const uint_t size_m, size_k, size_n;
 
 private:
+	const uint_t image_size;
+
+private:
 	struct {
 		struct {
 			int_t yi, off_x_ch;
@@ -150,6 +153,7 @@ private:
 			int_t yj, off_ori;
 			int_t oci, off_oci;
 		} j;
+		int_t off_img;
 	} state2;
 	decltype(state2) const state2_init;
 
@@ -175,6 +179,7 @@ public:
 			  size_m((out_channels - 1) / pack_m + 1),
 			  size_k(in_channels * kernel_size.area()),
 			  size_n(output_size.area()),
+			  image_size(size_k * size_n),
 			  state2_init({
 		.i = {
 				.yi = 0, .off_x_ch = 0,
@@ -185,6 +190,7 @@ public:
 				.yj = 0, .off_ori = -(int_t)padding_hoff,
 				.oci = 0, .off_oci = -(int_t)padding.width,
 		},
+		.off_img = 0,
 	}) {
 		/*
 		 * the order of initialization of fields is the same as definition.
@@ -240,7 +246,7 @@ public:
 					if (
 							off_x_row >= 0 && off_x_row < (int_t)input_size_area &&
 							off_x_col >= 0 && off_x_col < (int_t)input_size.width) {
-						t = x[i.off_x_ch + off_x_row + off_x_col];
+						t = x[s.off_img + i.off_x_ch + off_x_row + off_x_col];
 					} else {
 						t = pad_value;
 					}
@@ -283,6 +289,11 @@ public:
 
 	void reset() {
 		state2 = state2_init;
+	}
+	void next_image() {
+		state2.i = state2_init.i;
+		state2.j = state2_init.j;
+		state2.off_img += image_size;
 	}
 };
 

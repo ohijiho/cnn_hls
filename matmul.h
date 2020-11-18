@@ -341,13 +341,16 @@ void matmul_acc_transpose_a(RAM_a a, RAM_b b, RAM_c c,
 	using row_t = hlslib::DataPack<T, pack_n>;
 	const uint_t pack_m_size_n = pack_m * size_n;
 	for (uint_t off_c_row = 0, i = 0; i < size_m; i++, off_c_row += pack_m_size_n) {
+#pragma HLS UNROLL factor=1
 		for (uint_t j = 0; j < size_n; j++) {
+#pragma HLS UNROLL factor=1
 			row_t acc[pack_m];
 #pragma HLS ARRAY_PARTITION variable=acc cyclic factor=unroll_m
 			T acc_part[pack_m][pack_n];
 #pragma HLS ARRAY_PARTITION variable=acc_part cyclic factor=unroll_m dim=1
 #pragma HLS ARRAY_PARTITION variable=acc_part cyclic factor=unroll_n dim=2
 			for (uint_t off_c = off_c_row + j, ki = 0; ki < pack_m; ki++, off_c += size_n) {
+#pragma HLS UNROLL factor=1
 				acc[ki] = c[off_c];
 			}
 			for (uint_t ki = 0; ki < pack_m; ki++) {
@@ -357,6 +360,7 @@ void matmul_acc_transpose_a(RAM_a a, RAM_b b, RAM_c c,
 			for (uint_t off_a = i, off_b = j,
 					k = 0; k < size_k; k++,
 					off_a += size_m, off_b += size_n) {
+#pragma HLS UNROLL factor=1
 				const col_t abuf = a[off_a];
 				const row_t bbuf = b[off_b];
 				T abuf_part[pack_m], bbuf_part[pack_n];
@@ -378,6 +382,7 @@ void matmul_acc_transpose_a(RAM_a a, RAM_b b, RAM_c c,
 				acc[ki] << acc_part[ki];
 			}
 			for (uint_t off_c = off_c_row + j, ki = 0; ki < pack_m; ki++, off_c += size_n) {
+#pragma HLS UNROLL factor=1
 				c[off_c] = acc[ki];
 			}
 		}
