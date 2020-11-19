@@ -12,5 +12,6 @@
 #define INT_PRIMITIVE 1
 #define PACK_W 1
 #define LAYER6_TANH_CPU 1
+#define REUSE_LAYER_FUNCTIONS 1
 
 #endif

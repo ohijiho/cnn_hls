@@ -37,4 +37,6 @@ hlslib::DataPack<T, n> partial_pack(const hlslib::DataPack<T, m> src[n / m]) {
 	return ret;
 }
 
+#define DO_PRAGMA(x) _Pragma (#x)
+
 #endif
