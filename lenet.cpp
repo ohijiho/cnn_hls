@@ -100,12 +100,13 @@ void lenet1(
 	INTERFACE_MAPF(layer6, BUNDLE6, 40)
 	INTERFACE_LINE(layer7, BUNDLE7, 40, 10, 400)
 
-#pragma HLS DATAFLOW
+//#pragma HLS DATAFLOW
 
 	/*
 	 * TODO: run these functions in parallel and independently
 	 */
 
+	/*
 	{
 		for (uint_t i = 0; i < 2; i++) {
 #pragma HLS UNROLL factor=1
@@ -115,6 +116,9 @@ void lenet1(
 				cnn_Conv2d<0, BATCH_SIZE, value_t, PACK_W>(layer3_x, layer3_y, layer3_weight, layer3_bias, layer3_input_size, layer3_in_channels, layer3_out_channels, layer3_kernel_size, layer3_stride, layer3_padding, layer3_dilation);
 		}
 	}
+	*/
+	/*
+
 	{
 		for (uint_t i = 0; i < 2; i++) {
 #pragma HLS UNROLL factor=1
@@ -124,7 +128,8 @@ void lenet1(
 				cnn_MaxPool2d<0, BATCH_SIZE, value_t>(layer4_x, layer4_y, layer4_channels, layer4_input_size, layer4_kernel_size, layer4_stride, layer4_padding, layer4_dilation);
 		}
 	}
-	{
+	*/
+	/*{
 		for (uint_t i = 0; i < 2; i++) {
 #pragma HLS UNROLL factor=1
 			if (i == 0)
@@ -132,8 +137,8 @@ void lenet1(
 			else
 				cnn_Linear<0, BATCH_SIZE, value_t, PACK_W>(layer7_x, layer7_y, layer7_weight, layer7_bias, layer7_in_features, layer7_out_features);
 		}
-	}
-#if !LAYER6_TANH_CPU
+	}*/
+//#if !LAYER6_TANH_CPU
 	cnn_Tanh<0, BATCH_SIZE, value_t>(layer6_x, layer6_y, layer6_features);
-#endif
+//#endif
 }

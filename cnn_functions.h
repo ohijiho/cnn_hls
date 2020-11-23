@@ -370,6 +370,72 @@ void cnn_ReLU(RAM_x x, RAM_y y, uint_t features) {
 	map_function<dup_func, batch_size, T, unroll_factor, Function>(x, y, features);
 }
 
+//W=32, I=8
+template <int _AP_W, int _AP_I, ap_q_mode _AP_Q, ap_o_mode _AP_O, int _AP_N>
+ap_fixed<_AP_W, _AP_I, _AP_Q, _AP_O, _AP_N> my_exp(ap_fixed<_AP_W, _AP_I, _AP_Q, _AP_O, _AP_N> x) {
+	typedef ap_fixed<_AP_W, _AP_I, _AP_Q, _AP_O, _AP_N> T;
+	const T inv_ln2 = 1.44269504, ln2 = 0.69314718;
+	static const T inv_fac[11]={1,1,1.0/2,1.0/6,1.0/24,1.0/120,1.0/720,1.0/5040,1.0/40320,1.0/362880,1.0/3628800};
+
+	T y = x * inv_ln2;
+	ap_int<_AP_I> p = y(_AP_W - 1, _AP_W - _AP_I);
+	T qq = 0;
+	qq(_AP_W - _AP_I - 1, 0) = y(_AP_W - _AP_I - 1, 0);
+	T q = qq * ln2;
+
+	T ex = 0, nx = 1;
+	for(uint_t i = 0; i < 5; i++)
+	{
+#pragma HLS UNROLL factor=1
+		T a[2], b[2]={inv_fac[i], q};
+		for(uint_t j = 0; j < 2; j++)
+		{
+#pragma HLS UNROLL factor=1
+			a[j] = b[j] * nx;
+		}
+		ex += a[0];
+		nx = a[1];
+	}
+	//std::cout<<"x : "<<(double)x<<", y : "<<(double)y<<", p : "<<(double)p<<", qq : "<<(double)qq<<", q : "<<(double)q<<", ex : "<<(double)ex<<", output : "<<(double)(ex<<p)<<std::endl;
+	return (ex << p);
+}
+
+/*template <int _AP_W, int _AP_I, ap_q_mode _AP_Q, ap_o_mode _AP_O, int _AP_N>
+ap_fixed<_AP_W, _AP_I, _AP_Q, _AP_O, _AP_N> my_exp(ap_fixed<_AP_W, _AP_I, _AP_Q, _AP_O, _AP_N> x) {
+	typedef ap_fixed<_AP_W, _AP_I, _AP_Q, _AP_O, _AP_N> T;
+	const T inv_ln2 = 1.44269504, ln2 = 0.69314718;
+	static const T inv_fac[11]={1,1,1.0/2,1.0/6,1.0/24,1.0/120,1.0/720,1.0/5040,1.0/40320,1.0/362880,1.0/3628800};
+
+	ap_int<_AP_I> p;
+	T q;
+	{
+		T a[3] = {x, }, b[2], coef[] = {inv_ln2, ln2};
+		for (uint_t i = 0; i < 2; i++) {
+			b[i] = a[i] * coef[i];
+			a[i + 1](_AP_W - _AP_I - 1, 0) = b[i](_AP_W - _AP_I - 1, 0);
+		}
+		p = b[0](_AP_W - 1, _AP_W - _AP_I);
+		q = b[1];
+	}
+	x *= inv_ln2;
+
+	T ex = 0, nx = 1;
+	for(uint_t i = 0; i < 5; i++)
+	{
+#pragma HLS UNROLL factor=1
+		T a[2], b[2]={inv_fac[i], q};
+		for(uint_t j = 0; j < 2; j++)
+		{
+#pragma HLS UNROLL factor=1
+			a[j] = b[j] * nx;
+		}
+		ex += a[0];
+		nx = a[1];
+	}
+	//std::cout<<"x : "<<(double)x<<", y : "<<(double)y<<", p : "<<(double)p<<", qq : "<<(double)qq<<", q : "<<(double)q<<", ex : "<<(double)ex<<", output : "<<(double)(ex<<p)<<std::endl;
+	return (ex << p);
+}*/
+
 template<uint_t dup_func, uint_t batch_size, typename T, uint_t unroll_factor = 1, typename RAM_x, typename RAM_y>
 void cnn_Tanh(RAM_x x, RAM_y y, uint_t features) {
 	/*
@@ -379,13 +445,40 @@ void cnn_Tanh(RAM_x x, RAM_y y, uint_t features) {
 	struct Function {
 		static T Apply(T &&x) {
 #pragma HLS INLINE
-			T y = hls::tanh(x);
-			/*
-			 * TODO: BUG?
-			 * 		hls::tanh drops sign
-			 */
-			if (x < 0 && y > 0)
-				y = -y;
+			//T y = hls::tanh(x);
+			T y;
+			static const T inv_f1[11]={1,1,1.0/2,1.0/6,1.0/24,1.0/120,1.0/720,1.0/5040,1.0/40320,1.0/362880,1.0/3628800};
+			static const T inv_f2[11]={1,-1,1.0/2,-1.0/6,1.0/24,-1.0/120,1.0/720,-1.0/5040,1.0/40320,-1.0/362880,1.0/3628800};
+			if(x>=4) y=1;
+			else if(x<=-4) y=-1;
+			else if(x==0) y=0;
+			else
+			{
+				/*T ex=0,rex=0,nx=1;
+				for(uint_t i=0;i<8;i++)
+				{
+#pragma HLS UNROLL factor=1
+					T a[3],b[3]={inv_f1[i],inv_f2[i],x};
+					for(uint_t j = 0 ;j < 3 ;j++)
+					{
+#pragma HLS UNROLL factor=1
+						a[j] = b[j] * nx;
+					}
+					ex += a[0];
+					rex += a[1];
+					nx = a[2];
+				}*/
+				T ex,rex;
+				T b[2],a[2]={x,(T)(-x)};
+				for(uint_t i=0;i<2;i++)
+				{
+#pragma HLS UNROLL factor=1
+					b[i]=my_exp(a[i]);
+				}
+				ex=b[0];
+				rex=b[1];
+				y=(ex-rex)/(ex+rex);
+			}
 			return y;
 		}
 	};
