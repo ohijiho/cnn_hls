@@ -8,57 +8,46 @@
 #include "utils.h"
 #include <hlslib/xilinx/Operators.h>
 #include "operators.h"
+#include "conv.h"
 
-template<typename T, typename RAM_A, typename RAM_B, typename RAM_C>
-void matmul(RAM_A a, RAM_B b, RAM_C c,
-		uint_t size_m, uint_t size_k, uint_t size_n) {
-	matmul_ram_naive<T>(
-			a, b, c, size_m, size_k, size_n);
-}
-
-template<uint_t dup_func, uint_t batch_size, typename T, uint_t pack_w = 1,
+template<uint_t batch_size, typename T, uint_t pack_w = 1,
 		typename RAM_x, typename RAM_y, typename RAM_weight, typename RAM_bias>
 void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 		size2_t input_size,
 		uint_t in_channels, uint_t out_channels,
 		size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation) {
 	/*
-	 * pack_t x[in_channels][input_size];
-	 * pack_t y[out_channels][output_size];
+	 * T x[in_channels][input_size][batch_size];
+	 * T y[out_channels][output_size][batch_size];
 	 * T weight[in_channels][kernel_size][out_channels];
 	 */
 	using row_t = hlslib::DataPack<T, batch_size>;
 	using col_t = hlslib::DataPack<T, pack_w>;
+#if CONV_DATAFLOW
+#define WHICH 4
+#else
 #define WHICH 2
+#endif
 #if WHICH == 0
-	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
-	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
-	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, im2col, y, bias,
-			im2col.size_m, im2col.size_k, im2col.size_n);
+#error No implementation
 #elif WHICH == 1
-	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
-	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
-	row_t b_bram[std::max(1 * 5 * 5 * 24 * 24, 5 * 5 * 5 * 8 * 8)];
-	row_t c_bram[std::max(5 * 24 * 24, 5 * 8 * 8)];
-	im2col.dump_all(b_bram);
-	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, b_bram, c_bram, bias,
-			im2col.size_m, im2col.size_k, im2col.size_n);
-	for (uint_t i = 0; i < im2col.size_m * im2col.size_n; i++) {
-		y[i] = c_bram[i];
-	}
+#error No implementation
 #elif WHICH == 2
-	using im2col_t = iter_im2col<pack_w, batch_size, T, RAM_x>;
+	using im2col_t = iter_im2col<pack_w, batch_size, T>;
 //	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
-	const uint_t block_m = 8, block_k = 8, block_n = 32; // result in brams of 256 elements
-	const uint_t block_m_per_pack = block_m / pack_w;
+	constexpr uint_t block_m = ((8 - 1) / pack_w + 1) * pack_w, block_k = 8, block_n = 32; // result in brams of 256 elements
+	constexpr uint_t block_m_per_pack = block_m / pack_w;
 	static_assert(block_m_per_pack * pack_w == block_m, "block_m must be a multiple of pack_w");
-	im2col_t im2col(x, input_size, in_channels, out_channels, kernel_size, stride, padding, dilation, block_k, block_n);
+	im2col_t im2col(input_size, in_channels, out_channels, kernel_size, stride, padding, dilation,
+			block_k, block_n, true);
 	col_t a_bram[block_m_per_pack * block_k];
 	row_t b_bram[block_k * block_n];
 	row_t c_bram[block_m * block_n];
-	for (uint_t off_c_i = 0, i = 0; i < im2col.size_m; i += block_m, off_c_i += block_m * im2col.size_n) {
-		const uint_t cur_size_m = std::min(block_m, im2col.size_m - i);
-		for (im2col.reset(); im2col.dump(b_bram, true);) {
+	for (uint_t off_c_i = 0, c_i = 0,
+			i = 0; i < im2col.size_m; i += block_m_per_pack,
+			off_c_i += block_m_per_pack * im2col.size_n, c_i += block_m) {
+		const uint_t c_cur_size_m = std::min((uint_t)block_m, out_channels - c_i);
+		for (im2col.reset(); im2col.dump(x, b_bram);) {
 			const auto &res = im2col.last_result;
 			if (in_channels == 1) {
 //				std::cout << "i: " << i << ", j:" << res.j << ", k: " << res.k
@@ -77,56 +66,63 @@ void cnn_Conv2d(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 //				}
 			}
 			if (res.weight) {
-				copy_matrix<T, pack_w>(weight, a_bram,
-						im2col.size_m, block_m,
-						res.k * im2col.size_m + i, 0,
-						res.size_k, cur_size_m);
-				fill_matrix<T, pack_w>(a_bram, (T)0, block_m, res.size_k * block_m, block_k - res.size_k, cur_size_m);
+				load_weight<T, pack_w>(a_bram, weight,
+						block_m_per_pack, out_channels,
+						0, res.k * out_channels + c_i,
+						res.size_k, c_cur_size_m);
 			}
 			if (res.bias) {
-				load_row_bias<T, pack_w, batch_size>(c_bram, bias,
+				load_row_bias<T, batch_size>(c_bram, bias,
 						block_n,
-						0, i,
-						cur_size_m, res.size_n);
+						0, c_i,
+						c_cur_size_m, res.size_n);
 			}
 			else if (res.c_read) {
-				copy_matrix<T, batch_size>(y, c_bram,
-						im2col.size_n, block_n,
-						off_c_i + res.j, 0,
-						cur_size_m, res.size_n);
-			}
-			matmul_acc_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(
-					a_bram, b_bram, c_bram, block_m_per_pack, block_k, block_n);
-			if (res.c_write) {
-				copy_matrix<T, batch_size>(c_bram, y,
+				pack_matrix<T, batch_size>(c_bram, y,
 						block_n, im2col.size_n,
 						0, off_c_i + res.j,
-						cur_size_m, res.size_n);
+						c_cur_size_m, res.size_n);
+			}
+			matmul_acc_transpose_a<T, pack_w, pack_w, batch_size, batch_size>(
+					a_bram, b_bram, c_bram, block_m_per_pack, res.size_k, block_n);
+			if (res.c_write) {
+				unpack_matrix<T, batch_size>(c_bram, y,
+						block_n, im2col.size_n,
+						0, off_c_i + res.j,
+						c_cur_size_m, res.size_n);
 			}
 		}
 	}
+#elif WHICH == 3
+#error No implementation
+#elif WHICH == 4
+	cnn_Conv2d_rtl_dataflow<batch_size, T, pack_w>(x, y, weight, bias,
+			input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
+#elif WHICH == 5
+	cnn_Conv2d_hls_dataflow<batch_size, T, pack_w>(x, y, weight, bias,
+			input_size, in_channels, out_channels, kernel_size, stride, padding, dilation);
 #else
 #error No implementation
 #endif
 #undef WHICH
 }
+//
+//template<uint_t batch_size, typename T, typename RAM_x, typename RAM_y>
+//void cnn_AvgPool2d(RAM_x x, RAM_y y,
+//		uint_t channels, size2_t input_size,
+//		size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation) {
+//	/*
+//	 * pack_t x[channels][input_size];
+//	 * pack_t y[channels][output_size];
+//	 */
+//
+//	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
+//	im2col_t im2col(x, input_size, channels, 1, kernel_size, stride, padding, dilation, MaxIdentity<T>::value());
+//	map_reduce<T, batch_size, 1>((T)1 / (T)kernel_size.area(), im2col, y, 0,
+//			channels, kernel_size.area(), im2col.size_n);
+//}
 
-template<uint_t dup_func, uint_t batch_size, typename T, typename RAM_x, typename RAM_y>
-void cnn_AvgPool2d(RAM_x x, RAM_y y,
-		uint_t channels, size2_t input_size,
-		size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation) {
-	/*
-	 * pack_t x[channels][input_size];
-	 * pack_t y[channels][output_size];
-	 */
-
-	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
-	im2col_t im2col(x, input_size, channels, 1, kernel_size, stride, padding, dilation, MaxIdentity<T>::value());
-	map_reduce<dup_func, T, batch_size, 1>((T)1 / (T)kernel_size.area(), im2col, y, 0,
-			channels, kernel_size.area(), im2col.size_n);
-}
-
-template<uint_t dup_func, uint_t batch_size, typename T, typename RAM_x, typename RAM_y>
+template<uint_t batch_size, typename T, typename RAM_x, typename RAM_y>
 void cnn_MaxPool2d(RAM_x x, RAM_y y,
 		uint_t channels, size2_t input_size,
 		size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation) {
@@ -142,7 +138,7 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 #if WHICH == 0
 	using im2col_t = ram_im2col<batch_size, T, RAM_x>;
 	im2col_t im2col(x, input_size, channels, 1, kernel_size, stride, padding, dilation, identity);
-	map_reduce<dup_func, T, batch_size, 1, RightOp<T>, reduce>(0, im2col, y, identity,
+	map_reduce<T, batch_size, 1, RightOp<T>, reduce>(0, im2col, y, identity,
 			channels, kernel_size.area(), im2col.size_n);
 #elif WHICH == 1
 	using im2col_t = ram_im2col<batch_size, 1, T, RAM_x>;
@@ -190,13 +186,14 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 	}
 #elif WHICH == 3
 	const uint_t unroll_n = batch_size;
-	using im2col_t = iter_im2col<1, batch_size, T, RAM_x>;
+	using im2col_t = iter_im2col<1, batch_size, T>;
 	const uint_t block_n = 256; // result in brams of 256 elements
-	im2col_t im2col(x, input_size, 1, 1, kernel_size, stride, padding, dilation, 1, block_n, identity);
+	im2col_t im2col(input_size, 1, 1, kernel_size, stride, padding, dilation,
+			1, block_n, true, identity);
 	row_t b_bram[block_n];
 	row_t c_bram[block_n];
 	for (uint_t y_off_i = 0, i = 0; i < channels; i++, y_off_i += im2col.size_n, im2col.next_image()) {
-		for (; im2col.dump(b_bram, true);) {
+		for (; im2col.dump(x, b_bram);) {
 			const auto &res = im2col.last_result;
 			if (input_size.width == 24) {
 //				std::cout << "i: " << i << ", j:" << res.j << ", k: " << res.k
@@ -231,7 +228,7 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 				c_bram[j] << cbuf_part;
 			}
 			if (res.c_write) {
-				copy_matrix<T, batch_size>(c_bram, y,
+				unpack_matrix<T, batch_size>(c_bram, y,
 						block_n, im2col.size_n,
 						0, y_off_i + res.j,
 						1, res.size_n);
@@ -260,7 +257,7 @@ void cnn_MaxPool2d(RAM_x x, RAM_y y,
 #undef WHICH
 }
 
-template<uint_t dup_func, uint_t batch_size, typename T, uint_t pack_w = 1,
+template<uint_t batch_size, typename T, uint_t pack_w = 1,
 		typename RAM_x, typename RAM_y, typename RAM_weight, typename RAM_bias>
 void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 		uint_t in_features, uint_t out_features) {
@@ -281,14 +278,14 @@ void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 	using col_t = hlslib::DataPack<T, pack_w>;
 #define WHICH 2
 #if WHICH == 0
-	matmul_row_bias_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(weight, x, y, bias, out_features, in_features, 1);
+	matmul_row_bias_transpose_a<T, pack_w, pack_w, batch_size, batch_size>(weight, x, y, bias, out_features, in_features, 1);
 #elif WHICH == 1
-	cnn_Conv2d<dup_func, batch_size, T>(x, y, weight, bias,
+	cnn_Conv2d<batch_size, T>(x, y, weight, bias,
 			{1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
 
 	using im2col_t = ram_im2col<batch_size, 1, T, RAM_x>;
 	im2col_t im2col(x, {1, 1}, in_features, out_features, {1, 1}, {1, 1}, {0, 0}, {1, 1});
-	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, im2col, y, bias,
+	matmul_row_bias_transpose_a<T, 1, 1, batch_size, batch_size>(weight, im2col, y, bias,
 			out_features, in_features, 1);
 
 	struct ram_t {
@@ -296,41 +293,41 @@ void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 			return (T)0;
 		}
 	} ram;
-	matmul_row_bias_transpose_a<dup_func, T, 1, 1, batch_size, batch_size>(weight, ram, y, bias, out_features, in_features, 1);
+	matmul_row_bias_transpose_a<T, 1, 1, batch_size, batch_size>(weight, ram, y, bias, out_features, in_features, 1);
 #elif WHICH == 2
-	const uint_t size_m = out_features, size_k = in_features;
-	const uint_t block_m = 16, block_k = 16;
-	const uint_t block_m_per_pack = block_m / pack_w;
+	const uint_t size_m = (out_features - 1) / pack_w + 1, size_k = in_features;
+	constexpr uint_t block_m = ((16 - 1) / pack_w + 1) * pack_w, block_k = 16;
+	constexpr uint_t block_m_per_pack = block_m / pack_w;
 	static_assert(block_m_per_pack * pack_w == block_m, "block_m must be a multiple of pack_w");
-	col_t a_bram[block_m * block_k];
+	col_t a_bram[block_m_per_pack * block_k];
 	row_t b_bram[block_k];
 	row_t c_bram[block_m];
-	for (uint_t i = 0; i < size_m; i += block_m) {
-		uint_t cur_size_m = std::min(block_m, size_m - i);
-		load_row_bias<T, pack_w, batch_size>(c_bram, bias,
+	for (uint_t c_i = 0, i = 0; i < size_m; i += block_m_per_pack, c_i += block_m) {
+		const uint_t c_cur_size_m = std::min(block_m, out_features - c_i);
+		load_row_bias<T, batch_size>(c_bram, bias,
 				1,
-				0, i,
-				block_m, 1);
-		for (uint_t a_off = i, k = 0; k < size_k; k += block_k, a_off += block_k * size_m) {
+				0, c_i,
+				c_cur_size_m, 1);
+		for (uint_t a_off = c_i, k = 0; k < size_k; k += block_k, a_off += block_k * out_features) {
 			uint_t cur_size_k = std::min(block_k, size_k - k);
-			{
-				copy_matrix<T, pack_w>(weight, a_bram,
-						size_m, block_m,
-						a_off, 0,
-						cur_size_k, cur_size_m);
-				fill_matrix<T, pack_w>(a_bram, (T)0, block_m, cur_size_k * block_m, block_k - cur_size_k, cur_size_m);
-			}
-			copy_matrix<T, pack_w>(x, b_bram,
+//			printf("size_m: %u, size_k: %u, c_i: %u, i: %u, c_cur_size_m: %u, a_off: %u, k: %u, cur_size_k: %u\n",
+//					size_m, size_k,
+//					c_i, i, c_cur_size_m, a_off, k, cur_size_k);
+			load_weight<T, pack_w>(a_bram, weight,
+					block_m_per_pack, out_features,
+					0, a_off,
+					cur_size_k, c_cur_size_m);
+			pack_matrix<T, BATCH_SIZE>(b_bram, x,
 					1, 1,
-					k, 0,
+					0, k,
 					cur_size_k, 1);
-			matmul_acc_transpose_a<dup_func, T, pack_w, pack_w, batch_size, batch_size>(
-					a_bram, b_bram, c_bram, block_m_per_pack, block_k, 1);
+			matmul_acc_transpose_a<T, pack_w, 1, batch_size, 1>(
+					a_bram, b_bram, c_bram, block_m_per_pack, cur_size_k, 1);
 		}
-		copy_matrix<T, batch_size>(c_bram, y,
+		unpack_matrix<T, batch_size>(c_bram, y,
 				1, 1,
-				0, i,
-				cur_size_m, 1);
+				0, c_i,
+				c_cur_size_m, 1);
 	}
 #else
 #error No implementation
@@ -338,24 +335,20 @@ void cnn_Linear(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 #undef WHICH
 }
 
-template<uint_t dup_func, uint_t batch_size, typename T, uint_t unroll_factor,
+template<uint_t batch_size, typename T, uint_t unroll_factor,
 		class Function, typename RAM_x, typename RAM_y>
 void map_function(RAM_x x, RAM_y y, uint_t size) {
 #pragma HLS INLINE
-	using pack_t = hlslib::DataPack<T, batch_size>;
 	for (uint_t i = 0; i < size; i++) {
-		const pack_t tx = x[i];
-		pack_t ty;
 		for (uint_t j = 0; j < batch_size; j++) {
 #pragma HLS UNROLL factor=unroll_factor
-			ty[j] = Function::Apply(tx[j]);
+			y[i][j] = Function::Apply((T)x[i][j]);
 		}
-		y[i] = ty;
 	}
 }
 
 
-template<uint_t dup_func, uint_t batch_size, typename T, uint_t unroll_factor = 1, typename RAM_x, typename RAM_y>
+template<uint_t batch_size, typename T, uint_t unroll_factor = 1, typename RAM_x, typename RAM_y>
 void cnn_ReLU(RAM_x x, RAM_y y, uint_t features) {
 	/*
 	 * T x[features][batch_size];
@@ -367,10 +360,10 @@ void cnn_ReLU(RAM_x x, RAM_y y, uint_t features) {
 			return x < 0 ? 0 : x;
 		}
 	};
-	map_function<dup_func, batch_size, T, unroll_factor, Function>(x, y, features);
+	map_function<batch_size, T, unroll_factor, Function>(x, y, features);
 }
 
-template<uint_t dup_func, uint_t batch_size, typename T, uint_t unroll_factor = 1, typename RAM_x, typename RAM_y>
+template<uint_t batch_size, typename T, uint_t unroll_factor = 1, typename RAM_x, typename RAM_y>
 void cnn_Tanh(RAM_x x, RAM_y y, uint_t features) {
 	/*
 	 * T x[features][batch_size];
@@ -389,7 +382,7 @@ void cnn_Tanh(RAM_x x, RAM_y y, uint_t features) {
 			return y;
 		}
 	};
-	map_function<dup_func, batch_size, T, unroll_factor, Function>(x, y, features);
+	map_function<batch_size, T, unroll_factor, Function>(x, y, features);
 }
 
 #endif

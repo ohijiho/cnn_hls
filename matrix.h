@@ -9,7 +9,8 @@ void copy_matrix(RAM_x src, RAM_y dst,
 		uint_t src_num_cols, uint_t dst_num_cols,
 		uint_t src_start, uint_t dst_start,
 		uint_t block_rows, uint_t block_cols) {
-#pragma HLS INLINE
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
 	for (uint_t
 			off_x_i = src_start,
 			off_y_i = dst_start,
@@ -21,39 +22,48 @@ void copy_matrix(RAM_x src, RAM_y dst,
 	}
 }
 
-template<typename T, uint_t pack_n = 1,
-		typename RAM_x, typename RAM_y>
-void load_matrix(RAM_x mem, RAM_y buf,
-		uint_t mem_cols,
-		uint_t start,
-		uint_t buf_rows, uint_t buf_cols) {
-#pragma HLS INLINE
+template<typename T, uint_t pack_n = 1>
+void pack_matrix(hlslib::DataPack<T, pack_n> *pack, const T (*mem)[pack_n],
+		uint_t pack_num_cols, uint_t mem_num_cols,
+		uint_t pack_start, uint_t mem_start,
+		uint_t block_rows, uint_t block_cols) {
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
 	for (uint_t
-			off_x_i = start,
-			off_y = 0,
-			i = 0; i < buf_rows; i++,
-			off_x_i += mem_cols) {
-		for (uint_t j = 0; j < buf_cols; j++, off_y++) {
-			buf[off_y] = mem[off_x_i + j];
+			off_x_i = mem_start,
+			off_y_i = pack_start,
+			i = 0; i < block_rows; i++,
+			off_x_i += mem_num_cols, off_y_i += pack_num_cols) {
+		for (uint_t j = 0; j < block_cols; j++) {
+			pack[off_y_i + j] << mem[off_x_i + j];
 		}
 	}
 }
 
-template<typename T, uint_t pack_n = 1,
-		typename RAM_x, typename RAM_y>
-void store_matrix(RAM_x mem, RAM_y buf,
-		uint_t mem_cols,
-		uint_t start,
-		uint_t buf_rows, uint_t buf_cols) {
-#pragma HLS INLINE
+template<typename T, uint_t pack_n = 1>
+void unpack_matrix(const hlslib::DataPack<T, pack_n> *pack, T (*mem)[pack_n],
+		uint_t pack_num_cols, uint_t mem_num_cols,
+		uint_t pack_start, uint_t mem_start,
+		uint_t block_rows, uint_t block_cols) {
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
 	for (uint_t
-			off_x_i = start,
-			off_y = 0,
-			i = 0; i < buf_rows; i++,
-			off_x_i += mem_cols) {
-		for (uint_t j = 0; j < buf_cols; j++, off_y++) {
-			mem[off_x_i + j] = buf[off_y];
+			off_x_i = mem_start,
+			off_y_i = pack_start,
+			i = 0; i < block_rows; i++,
+			off_x_i += mem_num_cols, off_y_i += pack_num_cols) {
+		for (uint_t j = 0; j < block_cols; j++) {
+			pack[off_y_i + j] >> mem[off_x_i + j];
 		}
+	}
+}
+
+template<typename T>
+void copy_buffer(T *dst, const T *src, uint_t n) {
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
+	for (uint_t i = 0; i < n; i++) {
+		dst[i] = src[i];
 	}
 }
 
@@ -63,7 +73,8 @@ void fill_matrix(RAM_x x, T value,
 		uint_t num_cols,
 		uint_t start,
 		uint_t block_rows, uint_t block_cols) {
-#pragma HLS INLINE
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
 	using row_t = hlslib::DataPack<T, pack_n>;
 	row_t t = value;
 	for (uint_t off_x_i = start,
@@ -75,25 +86,59 @@ void fill_matrix(RAM_x x, T value,
 	}
 }
 
-template<typename T, uint_t pack_m = 1, uint_t pack_n,
-		typename RAM_y, typename RAM_bias>
-void load_row_bias(RAM_y y, RAM_bias bias,
+template<typename T, uint_t pack_n>
+void load_row_bias_one_row(hlslib::DataPack<T, pack_n> *y, const T *bias,
+		uint_t block_n,
+		uint_t bias_i, uint_t y_off_i) {
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
+	using row_t = hlslib::DataPack<T, pack_n>;
+	row_t rowbuf = bias[bias_i];
+	for (uint_t j = 0; j < block_n; j++) {
+#pragma HLS UNROLL factor=1
+		y[y_off_i + j] = rowbuf;
+	}
+}
+
+template<typename T, uint_t pack_n>
+void load_row_bias(hlslib::DataPack<T, pack_n> *y, const T *bias,
 		uint_t num_cols,
 		uint_t y_start, uint_t bias_start,
 		uint_t block_m, uint_t block_n) {
-#pragma HLS INLINE
-	using col_t = hlslib::DataPack<T, pack_m>;
+//#pragma HLS INLINE
+#pragma HLS INLINE OFF
 	using row_t = hlslib::DataPack<T, pack_n>;
-	for (uint_t y_off_i = y_start, i = 0; i < block_m; i++) {
+	for (uint_t y_off_i = y_start, i = 0; i < block_m; i++, y_off_i += num_cols) {
 #pragma HLS UNROLL factor=1
-		const col_t biasbuf = bias[bias_start + i];
-		for (uint_t ki = 0; ki < pack_m; ki++, y_off_i += num_cols) {
+		/*
+		 * BUG..
+		 * inlining this function will result in freezing
+		 * hls reads bias in a burst of block_m but these values are not saved
+		 */
+		load_row_bias_one_row<T, pack_n>(
+				y, bias, block_n,
+				bias_start + i, y_off_i);
+	}
+}
+
+template<typename T, uint_t pack_n>
+void load_weight(hlslib::DataPack<T, pack_n> *a, const T *weight,
+		uint_t a_num_cols, uint_t w_num_cols,
+		uint_t a_start, uint_t w_start,
+		uint_t block_m, uint_t block_n) {
+#pragma HLS INLINE off
+	for (uint_t
+			off_x_i = w_start,
+			off_y_i = a_start,
+			i = 0; i < block_m; i++,
+			off_x_i += w_num_cols, off_y_i += a_num_cols) {
+		for (uint_t off_y = off_y_i, j = 0; j < block_n; j += pack_n, off_y++) {
+			hlslib::DataPack<T, pack_n> row;
+			for (uint_t k = 0; k < pack_n && j + k < block_n; k++) {
 #pragma HLS UNROLL factor=1
-			row_t rowbuf = biasbuf[ki];
-			for (uint_t j = 0; j < block_n; j++) {
-#pragma HLS UNROLL factor=1
-				y[y_off_i + j] = rowbuf;
+				row[k] = weight[off_x_i + j + k];
 			}
+			a[off_y] = row;
 		}
 	}
 }

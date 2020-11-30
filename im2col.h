@@ -25,7 +25,7 @@ private:
 			  output_size(output_size),
 			  pad_value(pad_value),
 			  size_m(out_channels), size_k(in_channels * kernel_size.area()), size_n(output_size.area()) {
-#pragma HLS inline
+#pragma HLS INLINE
 	}
 public:
 	ram_im2col(RAM_x x,
@@ -38,11 +38,11 @@ public:
 					in_channels, out_channels,
 					kernel_size, stride, padding, dilation,
 					pad_value, calc_output_size(input_size, kernel_size, stride, padding, dilation)) {
-#pragma HLS inline
+#pragma HLS INLINE
 	}
 
 	row_t get(int_t ci, int_t ki, int_t oi) const {
-#pragma HLS inline
+#pragma HLS INLINE
 
 		const int_t oci = oi % output_size.width;
 		const int_t ori = oi / output_size.width;
@@ -56,7 +56,7 @@ public:
 		return ram[ci * input_size.area() + iri * input_size.width + ici];
 	}
 	row_t get(int_t i) const {
-#pragma HLS inline
+#pragma HLS INLINE
 		const int_t oi = i % output_size.area();
 		const int_t ki = i / output_size.area() % kernel_size.area();
 		const int_t ci = i / output_size.area() / kernel_size.area();
@@ -64,7 +64,7 @@ public:
 	}
 
 	row_t operator[](int_t i) const {
-#pragma HLS inline
+#pragma HLS INLINE
 		return this->get(i);
 	}
 
@@ -72,7 +72,7 @@ public:
 
 	template <typename RAM_y>
 	void dump_all(RAM_y y) const {
-#pragma HLS inline
+#pragma HLS INLINE
 #if 0
 		for (int_t i = 0; i < size_k * size_n; i++)
 			y[i] = get(i);
@@ -113,8 +113,7 @@ private:
 	const row_t pad_value;
 };
 
-template<uint_t pack_w, uint_t batch_size, typename T,
-		typename RAM_x>
+template<uint_t pack_w, uint_t batch_size, typename T>
 class iter_im2col {
 public:
 	static const uint_t pack_m = pack_w;
@@ -122,15 +121,15 @@ public:
 	using col_t = hlslib::DataPack<T, pack_m>;
 	using row_t = hlslib::DataPack<T, pack_n>;
 
-private:
-	const RAM_x x;
 	const size2_t input_size;
 	const uint_t in_channels, out_channels;
 	const size2_t kernel_size, stride, padding, dilation;
 	const size2_t output_size;
 	const uint_t block_k, block_n;
+	const bool column_first;
 	const row_t pad_value;
 
+private:
 	const uint_t dilation_hoff;
 	const uint_t stride_hoff;
 	const uint_t padding_hoff;
@@ -138,6 +137,7 @@ private:
 
 public:
 	const uint_t size_m, size_k, size_n;
+	const uint_t max_iter;
 
 private:
 	const uint_t image_size;
@@ -159,18 +159,18 @@ private:
 
 public:
 	iter_im2col(
-			RAM_x x,
 			size2_t input_size,
 			uint_t in_channels, uint_t out_channels,
 			size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation,
 			uint_t block_k, uint_t block_n,
+			bool column_first,
 			T pad_value = 0)
-			: x(x),
-			  input_size(input_size),
+			: input_size(input_size),
 			  in_channels(in_channels), out_channels(out_channels),
 			  kernel_size(kernel_size), stride(stride), padding(padding), dilation(dilation),
 			  output_size(calc_output_size(input_size, kernel_size, stride, padding, dilation)),
 			  block_k(block_k), block_n(block_n),
+			  column_first(column_first),
 			  pad_value(pad_value),
 			  dilation_hoff(dilation.height * input_size.width),
 			  stride_hoff(stride.height * input_size.width),
@@ -179,6 +179,7 @@ public:
 			  size_m((out_channels - 1) / pack_m + 1),
 			  size_k(in_channels * kernel_size.area()),
 			  size_n(output_size.area()),
+			  max_iter(((size_k - 1) / block_k + 1) * ((size_n - 1) / block_n + 1)),
 			  image_size(size_k * size_n),
 			  state2_init({
 		.i = {
@@ -196,30 +197,64 @@ public:
 		 * the order of initialization of fields is the same as definition.
 		 * it is safe to initialize size_n with output_size
 		 */
-#pragma HLS inline
+//#pragma HLS INLINE
+#pragma HLS ALLOCATION instances=umul limit=1 operation
+#pragma HLS ALLOCATION instances=udiv limit=1 operation
 		state2 = state2_init;
+		last_result.valid = false;
 	}
 
 	struct dump_result {
 		bool valid, weight, bias, c_read, c_write;
 		uint_t k, j, size_k, size_n;
 		inline operator bool() {
-#pragma HLS inline
+#pragma HLS INLINE
 			return valid;
 		}
 	} last_result;
 
-	template <typename RAM_y>
-	dump_result dump(RAM_y y, bool column_first) {
-#pragma HLS inline
+	dump_result tell() {
+//#pragma HLS INLINE
+		auto &s = state2;
+		if (column_first ? (s.j.yj == size_n) : (s.i.yi == size_k)) // iteration stop condition
+			return {false, };
+		const int_t yi_end = std::min(s.i.yi + block_k, size_k);
+		const int_t yj_end = std::min(s.j.yj + block_n, size_n);
+		return dump_result{
+				.valid = true,
+				.weight = column_first || s.j.yj == 0,
+				.bias = s.i.yi == 0,
+				.c_read = !column_first && s.i.yi != 0,
+				.c_write = !column_first || yi_end == size_k,
+				.k = (uint_t)s.i.yi,
+				.j = (uint_t)s.j.yj,
+				.size_k = (uint_t)(yi_end - s.i.yi),
+				.size_n = (uint_t)(yj_end - s.j.yj),
+		};
+	}
+
+	template <typename RAM_x, typename RAM_y>
+	bool dump(RAM_x x, RAM_y y) {
+//#pragma HLS INLINE
 		{
 			auto &s = state2;
 			if (column_first ? (s.j.yj == size_n) : (s.i.yi == size_k)) // iteration stop condition
 				return last_result = {false, };
 			auto i = s.i;
-			decltype(s.j) j;
+			auto j = s.j;
 			const int_t yi_end = std::min(s.i.yi + block_k, size_k);
 			const int_t yj_end = std::min(s.j.yj + block_n, size_n);
+
+			last_result.valid = true;
+			last_result.weight = column_first || j.yj == 0;
+			last_result.bias = i.yi == 0;
+			last_result.c_read = !column_first && i.yi != 0;
+			last_result.c_write = !column_first || yi_end == size_k;
+			last_result.k = (uint_t)i.yi;
+			last_result.j = (uint_t)j.yj;
+			last_result.size_k = (uint_t)(yi_end - i.yi);
+			last_result.size_n = (uint_t)(yj_end - j.yj);
+
 			for (int_t off_y_row = 0;; i.yi++, i.kci++, i.off_kci += dilation.width, off_y_row += block_n) { // loop i3 increment
 				if (i.kci == kernel_size.width) { // loop i3 stop condition
 					i.kri++, i.off_kri += dilation_hoff; // loop i2 increment
@@ -246,7 +281,7 @@ public:
 					if (
 							off_x_row >= 0 && off_x_row < (int_t)input_size_area &&
 							off_x_col >= 0 && off_x_col < (int_t)input_size.width) {
-						t = x[s.off_img + i.off_x_ch + off_x_row + off_x_col];
+						t << x[s.off_img + i.off_x_ch + off_x_row + off_x_col];
 					} else {
 						t = pad_value;
 					}
@@ -256,17 +291,6 @@ public:
 			/*
 			 * i, j point to next row and column
 			 */
-			dump_result ret = {
-					.valid = true,
-					.weight = column_first || s.j.yj == 0,
-					.bias = s.i.yi == 0,
-					.c_read = !column_first && s.i.yi != 0,
-					.c_write = !column_first || yi_end == size_k,
-					.k = (uint_t)s.i.yi,
-					.j = (uint_t)s.j.yj,
-					.size_k = (uint_t)(yi_end - s.i.yi),
-					.size_n = (uint_t)(yj_end - s.j.yj),
-			};
 			if (column_first) {
 				if (yi_end == size_k) { // end of column
 					s.j = j;
@@ -282,17 +306,17 @@ public:
 					s.j = j;
 				}
 			}
-			last_result = ret;
-			return ret;
+			return true;
 		}
 	}
 
 	void reset() {
-#pragma HLS INLINE
+//#pragma HLS INLINE
 		state2 = state2_init;
+		last_result.valid = false;
 	}
 	void next_image() {
-#pragma HLS INLINE
+//#pragma HLS INLINE
 		state2.i = state2_init.i;
 		state2.j = state2_init.j;
 		state2.off_img += image_size;
