@@ -157,30 +157,66 @@ private:
 	} state2;
 	decltype(state2) const state2_init;
 
-public:
-	iter_im2col(
-			size2_t input_size,
-			uint_t in_channels, uint_t out_channels,
-			size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation,
-			uint_t block_k, uint_t block_n,
-			bool column_first,
-			T pad_value = 0)
-			: input_size(input_size),
-			  in_channels(in_channels), out_channels(out_channels),
-			  kernel_size(kernel_size), stride(stride), padding(padding), dilation(dilation),
-			  output_size(calc_output_size(input_size, kernel_size, stride, padding, dilation)),
-			  block_k(block_k), block_n(block_n),
-			  column_first(column_first),
-			  pad_value(pad_value),
-			  dilation_hoff(dilation.height * input_size.width),
-			  stride_hoff(stride.height * input_size.width),
-			  padding_hoff(padding.height * input_size.width),
-			  input_size_area(input_size.area()),
-			  size_m((out_channels - 1) / pack_m + 1),
-			  size_k(in_channels * kernel_size.area()),
-			  size_n(output_size.area()),
-			  max_iter(((size_k - 1) / block_k + 1) * ((size_n - 1) / block_n + 1)),
-			  image_size(size_k * size_n),
+private:
+	struct init {
+		size2_t input_size;
+		uint_t in_channels, out_channels;
+		size2_t kernel_size, stride, padding, dilation;
+		size2_t output_size;
+		uint_t block_k, block_n;
+		bool column_first;
+		T pad_value;
+		uint_t dilation_hoff;
+		uint_t stride_hoff;
+		uint_t padding_hoff;
+		uint_t input_size_area;
+		uint_t size_m, size_k, size_n;
+		uint_t max_iter;
+		uint_t image_size;
+
+		init(size2_t input_size,
+				uint_t in_channels, uint_t out_channels,
+				size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation,
+				uint_t block_k, uint_t block_n,
+				bool column_first,
+				T pad_value) :
+					input_size(input_size),
+					in_channels(in_channels), out_channels(out_channels),
+					kernel_size(kernel_size), stride(stride), padding(padding), dilation(dilation),
+					block_k(block_k), block_n(block_n),
+					column_first(column_first),
+					pad_value(pad_value) {
+#pragma HLS ALLOCATION instances=mul limit=1 operation
+#pragma HLS ALLOCATION instances=div limit=1 operation
+			output_size = calc_output_size(input_size, kernel_size, stride, padding, dilation);
+			dilation_hoff = dilation.height * input_size.width;
+			stride_hoff = stride.height * input_size.width;
+			padding_hoff = padding.height * input_size.width;
+			input_size_area = input_size.area();
+			size_m = (out_channels - 1) / pack_m + 1;
+			size_k = in_channels * kernel_size.area();
+			size_n = output_size.area();
+			max_iter = ((size_k - 1) / block_k + 1) * ((size_n - 1) / block_n + 1);
+			image_size = size_k * size_n;
+		}
+	};
+	iter_im2col(init i)
+			: input_size(i.input_size),
+			  in_channels(i.in_channels), out_channels(i.out_channels),
+			  kernel_size(i.kernel_size), stride(i.stride), padding(i.padding), dilation(i.dilation),
+			  output_size(i.output_size),
+			  block_k(i.block_k), block_n(i.block_n),
+			  column_first(i.column_first),
+			  pad_value(i.pad_value),
+			  dilation_hoff(i.dilation_hoff),
+			  stride_hoff(i.stride_hoff),
+			  padding_hoff(i.padding_hoff),
+			  input_size_area(i.input_size_area),
+			  size_m(i.size_m),
+			  size_k(i.size_k),
+			  size_n(i.size_n),
+			  max_iter(i.max_iter),
+			  image_size(i.image_size),
 			  state2_init({
 		.i = {
 				.yi = 0, .off_x_ch = 0,
@@ -193,16 +229,66 @@ public:
 		},
 		.off_img = 0,
 	}) {
-		/*
-		 * the order of initialization of fields is the same as definition.
-		 * it is safe to initialize size_n with output_size
-		 */
-//#pragma HLS INLINE
-#pragma HLS ALLOCATION instances=umul limit=1 operation
-#pragma HLS ALLOCATION instances=udiv limit=1 operation
 		state2 = state2_init;
 		last_result.valid = false;
 	}
+
+public:
+	iter_im2col(
+			size2_t input_size,
+			uint_t in_channels, uint_t out_channels,
+			size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation,
+			uint_t block_k, uint_t block_n,
+			bool column_first,
+			T pad_value = 0)
+			: iter_im2col(init(input_size, in_channels, out_channels, kernel_size, stride, padding, dilation,
+					block_k, block_n, column_first, pad_value)) {}
+
+//	iter_im2col(
+//			size2_t input_size,
+//			uint_t in_channels, uint_t out_channels,
+//			size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation,
+//			uint_t block_k, uint_t block_n,
+//			bool column_first,
+//			T pad_value = 0)
+//			: input_size(input_size),
+//			  in_channels(in_channels), out_channels(out_channels),
+//			  kernel_size(kernel_size), stride(stride), padding(padding), dilation(dilation),
+//			  output_size(calc_output_size(input_size, kernel_size, stride, padding, dilation)),
+//			  block_k(block_k), block_n(block_n),
+//			  column_first(column_first),
+//			  pad_value(pad_value),
+//			  dilation_hoff(dilation.height * input_size.width),
+//			  stride_hoff(stride.height * input_size.width),
+//			  padding_hoff(padding.height * input_size.width),
+//			  input_size_area(input_size.area()),
+//			  size_m((out_channels - 1) / pack_m + 1),
+//			  size_k(in_channels * kernel_size.area()),
+//			  size_n(output_size.area()),
+//			  max_iter(((size_k - 1) / block_k + 1) * ((size_n - 1) / block_n + 1)),
+//			  image_size(size_k * size_n),
+//			  state2_init({
+//		.i = {
+//				.yi = 0, .off_x_ch = 0,
+//				.kri = 0, .off_kri = 0,
+//				.kci = 0, .off_kci = 0,
+//		},
+//		.j = {
+//				.yj = 0, .off_ori = -(int_t)padding_hoff,
+//				.oci = 0, .off_oci = -(int_t)padding.width,
+//		},
+//		.off_img = 0,
+//	}) {
+//		/*
+//		 * the order of initialization of fields is the same as definition.
+//		 * it is safe to initialize size_n with output_size
+//		 */
+////#pragma HLS INLINE
+//#pragma HLS ALLOCATION instances=umul limit=1 operation
+//#pragma HLS ALLOCATION instances=udiv limit=1 operation
+//		state2 = state2_init;
+//		last_result.valid = false;
+//	}
 
 	struct dump_result {
 		bool valid, weight, bias, c_read, c_write;

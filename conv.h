@@ -145,7 +145,7 @@ void cnn_Conv2d_rtl_dataflow(RAM_x x, RAM_y y, RAM_weight weight, RAM_bias bias,
 		uint_t in_channels, uint_t out_channels,
 		size2_t kernel_size, size2_t stride, size2_t padding, size2_t dilation) {
 //	const uint_t block_m = (5 - 1) / pack_w + 1, block_k = 5, block_n = 4;
-	constexpr uint_t block_m = ((8 - 1) / pack_w + 1) * pack_w, block_k = 8, block_n = 32; // result in brams of 256 elements
+	constexpr uint_t block_m = ((5 - 1) / pack_w + 1) * pack_w, block_k = 8, block_n = 32; // result in brams of 256 elements
 	constexpr uint_t block_m_per_pack = block_m / pack_w;
 	static_assert(block_m_per_pack * pack_w == block_m, "block_m must be a multiple of pack_w");
 	cnn_Conv2d_rtl_dataflow_class<batch_size, T, pack_w, block_m, block_k, block_n> conv(
