@@ -51,14 +51,14 @@ static void accuracy(uint32_t iter,											// number of iterations
         printf("Accuracy: %lf\n", (double)correct_counter / (iter + 1));
 }
 
-static void copy_batch(minibatch_t *dst, const float *src, size_t n) {
+static void copy_batch(value_t (*dst)[BATCH_SIZE], const float *src, size_t n) {
 	for (size_t i = 0; i < n; i++) {
 		for (size_t j = 0; j < BATCH_SIZE; j++) {
 			dst[i][j] = (value_t)src[j * n + i];
 		}
 	}
 }
-static void copy_batch(float *dst, const minibatch_t *src, size_t n) {
+static void copy_batch(float *dst, const value_t (*src)[BATCH_SIZE], size_t n) {
 	for (size_t i = 0; i < n; i++) {
 		for (size_t j = 0; j < BATCH_SIZE; j++) {
 			dst[j * n + i] = (float)src[i][j];
@@ -66,8 +66,10 @@ static void copy_batch(float *dst, const minibatch_t *src, size_t n) {
 	}
 }
 
+//#define DEFINE_PARAMETER(name, m) \
+//		weight_t name[sizeof(_##name) / sizeof(float) / (m) * PACK_W_SIZE(m)]
 #define DEFINE_PARAMETER(name, m) \
-		weight_t name[sizeof(_##name) / sizeof(float) / (m) * PACK_W_SIZE(m)]
+		value_t name[sizeof(_##name) / sizeof(float)]
 #define DEFINE_WB_PAIR(name) \
 		DEFINE_PARAMETER(weights_##name, sizeof(_bias_##name) / sizeof(float)); \
 		DEFINE_PARAMETER(bias_##name, sizeof(_bias_##name) / sizeof(float));
@@ -78,10 +80,10 @@ DEFINE_WB_PAIR(ip2)
 #undef DEFINE_PARAMETER
 #undef DEFINE_WB_PAIR
 
-static void copy_transpose(weight_t *dst, const float *src, size_t m, size_t n) {
+static void copy_transpose(value_t *dst, const float *src, size_t m, size_t n) {
 	for (size_t j = 0; j < n; j++) {
 		for (size_t i = 0; i < m; i++) {
-			dst[j * PACK_W_SIZE(m) + i / PACK_W][i % PACK_W] = src[i * n + j];
+			dst[j * m + i] = src[i * n + j];
 		}
 	}
 }
@@ -119,14 +121,14 @@ static void dump_image(const minibatch_t *img, size_t width, size_t height) {
 
 float ts_buf[BATCH_SIZE][784];
 
-minibatch_t test_image[2][784];
-minibatch_t feature_map1[2][24 * 24 * 5];
-minibatch_t max_pool1[2][12 * 12 * 5];
-minibatch_t feature_map2[2][8 * 8 * 5];
-minibatch_t max_pool2[2][4 * 4 * 5];
-minibatch_t ip1[2][40];
-minibatch_t tanh1[2][40];
-minibatch_t ip2[2][10];
+value_t test_image[2][784][BATCH_SIZE];
+value_t feature_map1[2][24 * 24 * 5][BATCH_SIZE];
+value_t max_pool1[2][12 * 12 * 5][BATCH_SIZE];
+value_t feature_map2[2][8 * 8 * 5][BATCH_SIZE];
+value_t max_pool2[2][4 * 4 * 5][BATCH_SIZE];
+value_t ip1[2][40][BATCH_SIZE];
+value_t tanh1[2][40][BATCH_SIZE];
+value_t ip2[2][10][BATCH_SIZE];
 
 float result[BATCH_SIZE][10];
 
@@ -150,30 +152,30 @@ int main() {
 //		dump_image(test_image[bufw], 28, 28);
 //		printf(" input ok\n");fflush(stdout);
 		void lenet1(
-				const minibatch_t *layer1_x, minibatch_t *layer1_y, const weight_t *layer1_weight, const weight_t *layer1_bias,
+				const value_t (*__restrict layer1_x)[BATCH_SIZE], value_t (*__restrict layer1_y)[BATCH_SIZE], const value_t *__restrict layer1_weight, const value_t *__restrict layer1_bias,
 				size2_t layer1_input_size,
 				uint_t layer1_in_channels, uint_t layer1_out_channels,
 				size2_t layer1_kernel_size, size2_t layer1_stride, size2_t layer1_padding, size2_t layer1_dilation,
 
-				const minibatch_t *layer2_x, minibatch_t *layer2_y,
+				const value_t (*__restrict layer2_x)[BATCH_SIZE], value_t (*__restrict layer2_y)[BATCH_SIZE],
 				uint_t layer2_channels, size2_t layer2_input_size,
 				size2_t layer2_kernel_size, size2_t layer2_stride, size2_t layer2_padding, size2_t layer2_dilation,
 
-				const minibatch_t *layer3_x, minibatch_t *layer3_y, const weight_t *layer3_weight, const weight_t *layer3_bias,
+				const value_t (*__restrict layer3_x)[BATCH_SIZE], value_t (*__restrict layer3_y)[BATCH_SIZE], const value_t *__restrict layer3_weight, const value_t *__restrict layer3_bias,
 				size2_t layer3_input_size,
 				uint_t layer3_in_channels, uint_t layer3_out_channels,
 				size2_t layer3_kernel_size, size2_t layer3_stride, size2_t layer3_padding, size2_t layer3_dilation,
 
-				const minibatch_t *layer4_x, minibatch_t *layer4_y,
+				const value_t (*__restrict layer4_x)[BATCH_SIZE], value_t (*__restrict layer4_y)[BATCH_SIZE],
 				uint_t layer4_channels, size2_t layer4_input_size,
 				size2_t layer4_kernel_size, size2_t layer4_stride, size2_t layer4_padding, size2_t layer4_dilation,
 
-				const minibatch_t *layer5_x, minibatch_t *layer5_y, const weight_t *layer5_weight, const weight_t *layer5_bias,
+				const value_t (*__restrict layer5_x)[BATCH_SIZE], value_t (*__restrict layer5_y)[BATCH_SIZE], const value_t *__restrict layer5_weight, const value_t *__restrict layer5_bias,
 				uint_t layer5_in_features, uint_t layer5_out_features,
 
-				const minibatch_t *layer6_x, minibatch_t *layer6_y, uint_t layer6_features,
+				const value_t (*__restrict layer6_x)[BATCH_SIZE], value_t (*__restrict layer6_y)[BATCH_SIZE], uint_t layer6_features,
 
-				const minibatch_t *layer7_x, minibatch_t *layer7_y, const weight_t *layer7_weight, const weight_t *layer7_bias,
+				const value_t (*__restrict layer7_x)[BATCH_SIZE], value_t (*__restrict layer7_y)[BATCH_SIZE], const value_t *__restrict layer7_weight, const value_t *__restrict layer7_bias,
 				uint_t layer7_in_features, uint_t layer7_out_features
 				);
 		lenet1(
@@ -212,19 +214,19 @@ int main() {
 //                        {5, 5}, 0, 1);
 //			}
 //		}
-		{
-			float xbuf[BATCH_SIZE][12 * 12 * 5];
-			float ybuf[BATCH_SIZE][8 * 8 * 5];
-			copy_batch((float*)xbuf, max_pool1[bufr], 12 * 12 * 5);
-			copy_batch((float*)ybuf, feature_map2[bufw], 8 * 8 * 5);
-			for (ptrdiff_t j = 0, iter = (i - 3) * BATCH_SIZE; j < (ptrdiff_t)BATCH_SIZE && iter < (ptrdiff_t)N_ITER; j++, iter++) {
-				dump_conv(iter, xbuf[j], {12, 12}, 5,
-						_weights_conv2,
-						_bias_conv2, 5,
-						ybuf[j],
-						{5, 5}, 0, 1);
-			}
-		}
+//		{
+//			float xbuf[BATCH_SIZE][12 * 12 * 5];
+//			float ybuf[BATCH_SIZE][8 * 8 * 5];
+//			copy_batch((float*)xbuf, max_pool1[bufr], 12 * 12 * 5);
+//			copy_batch((float*)ybuf, feature_map2[bufw], 8 * 8 * 5);
+//			for (ptrdiff_t j = 0, iter = (i - 3) * BATCH_SIZE; j < (ptrdiff_t)BATCH_SIZE && iter < (ptrdiff_t)N_ITER; j++, iter++) {
+//				dump_conv(iter, xbuf[j], {12, 12}, 5,
+//						_weights_conv2,
+//						_bias_conv2, 5,
+//						ybuf[j],
+//						{5, 5}, 0, 1);
+//			}
+//		}
 //		{
 //			float xbuf[BATCH_SIZE][40];
 //			float ybuf[BATCH_SIZE][40];
@@ -238,6 +240,19 @@ int main() {
 //				std::cout << std::endl;
 //			}
 //		}
+
+#if LAYER6_TANH_CPU
+		{
+			const size_t len = 40;
+			const value_t (*xbuf)[BATCH_SIZE] = ip1[bufr];
+			value_t (*ybuf)[BATCH_SIZE] = tanh1[bufw];
+			for (size_t j = 0; j < len; j++) {
+				for (size_t k = 0; k < BATCH_SIZE; k++) {
+					ybuf[j][k] = (value_t)tanh((float)xbuf[j][k]);
+				}
+			}
+		}
+#endif
 
 		copy_batch((float*)result, ip2[bufr], 10);
 //		printf(" output ok\n");fflush(stdout);

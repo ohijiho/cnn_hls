@@ -3,7 +3,19 @@
 /.cproject
 /.project
 
-/solution_*
+/solution_*/.autopilot
+/solution_*/.debug
+/solution_*/.tcls
+/solution_*/csim
+/solution_*/impl
+/solution_*/sim
+/solution_*/syn
+/solution_*/directives.tcl
+/solution_*/script.tcl
+/solution_*/*.directive
+/solution_*/*.funcunit
+/solution_*/*.log
+/solution_*/*_data.json
 /Debug
 /export
 /.reference
